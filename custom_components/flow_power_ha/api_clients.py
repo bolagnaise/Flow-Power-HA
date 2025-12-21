@@ -146,7 +146,9 @@ class AEMOClient:
 
             # Find the latest PUBLIC_PREDISPATCH file
             import re
-            pattern = r'PUBLIC_PREDISPATCH_\d{8}_\d{6}[^"]*\.zip'
+            # Pattern: PUBLIC_PREDISPATCH_YYYYMMDDHHMM_YYYYMMDDHHMMSS_LEGACY.zip
+            # Example: PUBLIC_PREDISPATCH_202512220830_20251222080217_LEGACY.zip
+            pattern = r'PUBLIC_PREDISPATCH_\d{12}_\d{14}[^">\s]*\.zip'
             matches = re.findall(pattern, html)
             _LOGGER.info("Found %d pre-dispatch files", len(matches))
 
