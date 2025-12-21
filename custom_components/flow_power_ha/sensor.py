@@ -20,6 +20,9 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import (
     CONF_NEM_REGION,
     DOMAIN,
+    FLOW_POWER_EXPORT_RATES,
+    HAPPY_HOUR_END,
+    HAPPY_HOUR_START,
     SENSOR_TYPE_EXPORT_PRICE,
     SENSOR_TYPE_IMPORT_PRICE,
     SENSOR_TYPE_PRICE_FORECAST,
@@ -83,6 +86,48 @@ class FlowPowerBaseSensor(CoordinatorEntity[FlowPowerCoordinator], SensorEntity)
             "model": "Electricity Pricing",
         }
 
+    def _convert_to_iso_timestamp(self, timestamp: str) -> str:
+        """Convert AEMO timestamp format to ISO format with timezone.
+
+        Args:
+            timestamp: AEMO format '2025/12/22 09:30:00' or ISO format
+
+        Returns:
+            ISO format '2025-12-22 09:30:00+10:00'
+        """
+        if not timestamp:
+            return ""
+
+        try:
+            tz_name = REGION_TIMEZONES.get(self._region, "Australia/Sydney")
+            tz = ZoneInfo(tz_name)
+
+            if "/" in timestamp:
+                dt = datetime.strptime(timestamp, "%Y/%m/%d %H:%M:%S")
+                dt = dt.replace(tzinfo=tz)
+            else:
+                return timestamp
+
+            return dt.strftime("%Y-%m-%d %H:%M:%S%z")
+        except (ValueError, TypeError):
+            return timestamp
+
+    def _parse_timestamp_to_datetime(self, timestamp: str) -> datetime | None:
+        """Parse timestamp string to datetime with timezone."""
+        if not timestamp:
+            return None
+
+        try:
+            tz_name = REGION_TIMEZONES.get(self._region, "Australia/Sydney")
+            tz = ZoneInfo(tz_name)
+
+            if "/" in timestamp:
+                dt = datetime.strptime(timestamp, "%Y/%m/%d %H:%M:%S")
+                return dt.replace(tzinfo=tz)
+            return None
+        except (ValueError, TypeError):
+            return None
+
 
 class FlowPowerImportPriceSensor(FlowPowerBaseSensor):
     """Sensor for current import price (with PEA)."""
@@ -110,10 +155,11 @@ class FlowPowerImportPriceSensor(FlowPowerBaseSensor):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return additional attributes."""
+        """Return additional attributes with EMHASS-compatible forecast_dict."""
         attrs = {
             "region": self._region,
             "unit": "$/kWh",
+            "forecast_dict": {},
         }
 
         if self.coordinator.data and self.coordinator.data.get("import_price"):
@@ -126,6 +172,16 @@ class FlowPowerImportPriceSensor(FlowPowerBaseSensor):
                 "network_cents": price_info.get("network"),
                 "gst_cents": price_info.get("gst"),
             })
+
+        # Build forecast_dict for EMHASS
+        if self.coordinator.data and self.coordinator.data.get("forecast"):
+            forecast_dict = {}
+            for period in self.coordinator.data["forecast"]:
+                raw_ts = period.get("timestamp", "")
+                iso_ts = self._convert_to_iso_timestamp(raw_ts)
+                if iso_ts:
+                    forecast_dict[iso_ts] = period.get("price_dollars", 0)
+            attrs["forecast_dict"] = forecast_dict
 
         if self.coordinator.data:
             attrs["last_update"] = self.coordinator.data.get("last_update")
@@ -150,6 +206,14 @@ class FlowPowerExportPriceSensor(FlowPowerBaseSensor):
         """Initialize the export price sensor."""
         super().__init__(coordinator, config_entry, region, SENSOR_TYPE_EXPORT_PRICE)
 
+    def _get_export_price_for_time(self, dt: datetime) -> float:
+        """Calculate export price for a specific time (Happy Hour aware)."""
+        local_time = dt.time()
+        is_happy_hour = HAPPY_HOUR_START <= local_time < HAPPY_HOUR_END
+        if is_happy_hour:
+            return FLOW_POWER_EXPORT_RATES.get(self._region, 0.0)
+        return 0.0
+
     @property
     def native_value(self) -> float | None:
         """Return the current export price in $/kWh."""
@@ -159,10 +223,11 @@ class FlowPowerExportPriceSensor(FlowPowerBaseSensor):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return additional attributes."""
+        """Return additional attributes with EMHASS-compatible forecast_dict."""
         attrs = {
             "region": self._region,
             "unit": "$/kWh",
+            "forecast_dict": {},
         }
 
         if self.coordinator.data and self.coordinator.data.get("export_price"):
@@ -174,6 +239,18 @@ class FlowPowerExportPriceSensor(FlowPowerBaseSensor):
                 "happy_hour_start": export_info.get("happy_hour_start"),
                 "happy_hour_end": export_info.get("happy_hour_end"),
             })
+
+        # Build forecast_dict for EMHASS (export prices based on Happy Hour)
+        if self.coordinator.data and self.coordinator.data.get("forecast"):
+            forecast_dict = {}
+            for period in self.coordinator.data["forecast"]:
+                raw_ts = period.get("timestamp", "")
+                iso_ts = self._convert_to_iso_timestamp(raw_ts)
+                dt = self._parse_timestamp_to_datetime(raw_ts)
+                if iso_ts and dt:
+                    export_price = self._get_export_price_for_time(dt)
+                    forecast_dict[iso_ts] = export_price
+            attrs["forecast_dict"] = forecast_dict
 
         return attrs
 
@@ -204,10 +281,11 @@ class FlowPowerWholesaleSensor(FlowPowerBaseSensor):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return additional attributes."""
+        """Return additional attributes with EMHASS-compatible forecast_dict."""
         attrs = {
             "region": self._region,
             "unit": "c/kWh",
+            "forecast_dict": {},
         }
 
         if self.coordinator.data:
@@ -215,6 +293,18 @@ class FlowPowerWholesaleSensor(FlowPowerBaseSensor):
             if wholesale is not None:
                 attrs["price_dollars"] = round(wholesale / 100, 4)
             attrs["last_update"] = self.coordinator.data.get("last_update")
+
+        # Build forecast_dict for EMHASS (wholesale in $/kWh)
+        if self.coordinator.data and self.coordinator.data.get("forecast"):
+            forecast_dict = {}
+            for period in self.coordinator.data["forecast"]:
+                raw_ts = period.get("timestamp", "")
+                iso_ts = self._convert_to_iso_timestamp(raw_ts)
+                if iso_ts:
+                    # Convert c/kWh to $/kWh
+                    wholesale_cents = period.get("wholesale_cents", 0)
+                    forecast_dict[iso_ts] = round(wholesale_cents / 100, 4)
+            attrs["forecast_dict"] = forecast_dict
 
         return attrs
 
@@ -242,36 +332,6 @@ class FlowPowerForecastSensor(FlowPowerBaseSensor):
         if self.coordinator.data and self.coordinator.data.get("import_price"):
             return self.coordinator.data["import_price"].get("final_dollars")
         return None
-
-    def _convert_to_iso_timestamp(self, timestamp: str) -> str:
-        """Convert AEMO timestamp format to ISO format with timezone.
-
-        Args:
-            timestamp: AEMO format '2025/12/22 09:30:00' or ISO format
-
-        Returns:
-            ISO format '2025-12-22 09:30:00+10:00'
-        """
-        if not timestamp:
-            return ""
-
-        try:
-            # Get timezone for region
-            tz_name = REGION_TIMEZONES.get(self._region, "Australia/Sydney")
-            tz = ZoneInfo(tz_name)
-
-            # Try AEMO format first: '2025/12/22 09:30:00'
-            if "/" in timestamp:
-                dt = datetime.strptime(timestamp, "%Y/%m/%d %H:%M:%S")
-                dt = dt.replace(tzinfo=tz)
-            else:
-                # Already ISO format or other
-                return timestamp
-
-            # Return ISO format: '2025-12-22 09:30:00+10:00'
-            return dt.strftime("%Y-%m-%d %H:%M:%S%z")
-        except (ValueError, TypeError):
-            return timestamp
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
