@@ -1,4 +1,4 @@
-"""Flow Power Sync integration for Home Assistant.
+"""Flow Power HA integration for Home Assistant.
 
 This integration provides electricity pricing sensors for Flow Power customers,
 with support for both Amber Electric and AEMO (direct wholesale) price sources.
@@ -27,7 +27,7 @@ PLATFORMS = [Platform.SENSOR]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up Flow Power Sync from a config entry."""
+    """Set up Flow Power HA from a config entry."""
     hass.data.setdefault(DOMAIN, {})
 
     # Merge data and options for current config

@@ -1,7 +1,7 @@
-"""Constants for Flow Power Sync integration."""
+"""Constants for Flow Power HA integration."""
 from datetime import time
 
-DOMAIN = "flow_power_sync"
+DOMAIN = "flow_power_ha"
 
 # PEA (Price Efficiency Adjustment) Constants
 FLOW_POWER_MARKET_AVG = 8.0  # Market TWAP average (c/kWh)

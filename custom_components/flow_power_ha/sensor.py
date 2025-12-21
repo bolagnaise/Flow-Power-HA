@@ -1,4 +1,4 @@
-"""Sensor entities for Flow Power Sync integration."""
+"""Sensor entities for Flow Power HA integration."""
 from __future__ import annotations
 
 import logging

@@ -1,4 +1,4 @@
-"""Config flow for Flow Power Sync integration."""
+"""Config flow for Flow Power HA integration."""
 from __future__ import annotations
 
 import logging

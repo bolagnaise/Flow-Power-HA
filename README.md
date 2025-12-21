@@ -1,4 +1,4 @@
-# Flow Power Sync
+# Flow Power HA
 
 A Home Assistant integration that provides Flow Power electricity pricing sensors for EMHASS optimization.
 
@@ -15,13 +15,13 @@ A Home Assistant integration that provides Flow Power electricity pricing sensor
 ### HACS (Recommended)
 
 1. Add this repository as a custom repository in HACS
-2. Search for "Flow Power Sync" and install
+2. Search for "Flow Power HA" and install
 3. Restart Home Assistant
 4. Add the integration via Settings > Devices & Services > Add Integration
 
 ### Manual Installation
 
-1. Copy the `custom_components/flow_power_sync` folder to your Home Assistant `custom_components` directory
+1. Copy the `custom_components/flow_power_ha` folder to your Home Assistant `custom_components` directory
 2. Restart Home Assistant
 3. Add the integration via Settings > Devices & Services > Add Integration
 

@@ -1,4 +1,4 @@
-"""Data update coordinator for Flow Power Sync."""
+"""Data update coordinator for Flow Power HA."""
 from __future__ import annotations
 
 import logging
