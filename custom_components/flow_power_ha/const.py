@@ -66,6 +66,8 @@ SENSOR_TYPE_PRICE_FORECAST = "price_forecast"
 
 # API URLs
 AEMO_CURRENT_PRICE_URL = "https://visualisations.aemo.com.au/aemo/apps/api/report/ELEC_NEM_SUMMARY"
+AEMO_5MIN_PREDISPATCH_URL = "https://visualisations.aemo.com.au/aemo/apps/api/report/5MIN_PREDISPATCH"
+AEMO_PREDISPATCH_PRICES_URL = "https://visualisations.aemo.com.au/aemo/apps/api/report/PREDISPATCH_PRICES"
 AEMO_FORECAST_BASE_URL = "https://nemweb.com.au/Reports/Current/Predispatch_Reports/"
 AMBER_API_BASE_URL = "https://api.amber.com.au/v1"
 

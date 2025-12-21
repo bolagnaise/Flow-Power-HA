@@ -13,8 +13,10 @@ from zoneinfo import ZoneInfo
 import aiohttp
 
 from .const import (
+    AEMO_5MIN_PREDISPATCH_URL,
     AEMO_CURRENT_PRICE_URL,
     AEMO_FORECAST_BASE_URL,
+    AEMO_PREDISPATCH_PRICES_URL,
     AMBER_API_BASE_URL,
     NEM_REGIONS,
 )
@@ -109,8 +111,13 @@ class AEMOClient:
             return cached[:periods] if cached else []
 
         try:
-            # Find the latest pre-dispatch file
-            forecast_data = await self._fetch_predispatch_report(region)
+            # Try JSON API first (more reliable)
+            forecast_data = await self._fetch_predispatch_json(region)
+
+            # Fall back to ZIP parsing if JSON fails
+            if not forecast_data:
+                _LOGGER.debug("JSON API returned no data, trying ZIP fallback")
+                forecast_data = await self._fetch_predispatch_report(region)
 
             if forecast_data:
                 self._forecast_cache[region] = forecast_data
@@ -123,8 +130,78 @@ class AEMOClient:
             _LOGGER.error("Error fetching AEMO forecast: %s", e)
             return self._forecast_cache.get(region, [])[:periods]
 
+    async def _fetch_predispatch_json(self, region: str) -> list[dict[str, Any]]:
+        """Fetch pre-dispatch prices from AEMO JSON API."""
+        forecasts = []
+
+        try:
+            # Fetch 5-minute pre-dispatch data
+            async with self._session.get(
+                AEMO_5MIN_PREDISPATCH_URL,
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as response:
+                if response.status != 200:
+                    _LOGGER.debug("5MIN_PREDISPATCH API returned status %s", response.status)
+                else:
+                    data = await response.json()
+                    for item in data.get("5MIN_PREDISPATCH", []):
+                        if item.get("REGIONID") == region:
+                            timestamp = item.get("INTERVAL_DATETIME", "")
+                            rrp = float(item.get("RRP", 0))
+
+                            # Convert $/MWh to c/kWh
+                            price_cents = rrp / 10
+                            price_dollars = rrp / 1000
+
+                            forecasts.append({
+                                "nemTime": timestamp,
+                                "perKwh": price_cents,
+                                "wholesaleKWHPrice": price_dollars,
+                                "price_mwh": rrp,
+                            })
+
+            # Also fetch 30-minute pre-dispatch for longer horizon
+            async with self._session.get(
+                AEMO_PREDISPATCH_PRICES_URL,
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as response:
+                if response.status != 200:
+                    _LOGGER.debug("PREDISPATCH_PRICES API returned status %s", response.status)
+                else:
+                    data = await response.json()
+                    for item in data.get("PREDISPATCH_PRICES", []):
+                        if item.get("REGIONID") == region:
+                            timestamp = item.get("DATETIME", "") or item.get("INTERVAL_DATETIME", "")
+                            rrp = float(item.get("RRP", 0))
+
+                            # Convert $/MWh to c/kWh
+                            price_cents = rrp / 10
+                            price_dollars = rrp / 1000
+
+                            forecasts.append({
+                                "nemTime": timestamp,
+                                "perKwh": price_cents,
+                                "wholesaleKWHPrice": price_dollars,
+                                "price_mwh": rrp,
+                            })
+
+            # Sort by timestamp and remove duplicates
+            seen = set()
+            unique_forecasts = []
+            for f in sorted(forecasts, key=lambda x: x["nemTime"]):
+                if f["nemTime"] and f["nemTime"] not in seen:
+                    seen.add(f["nemTime"])
+                    unique_forecasts.append(f)
+
+            _LOGGER.debug("AEMO JSON API returned %d forecast periods for %s", len(unique_forecasts), region)
+            return unique_forecasts
+
+        except Exception as e:
+            _LOGGER.error("Error fetching AEMO JSON forecast: %s", e)
+            return []
+
     async def _fetch_predispatch_report(self, region: str) -> list[dict[str, Any]]:
-        """Fetch and parse AEMO pre-dispatch report."""
+        """Fetch and parse AEMO pre-dispatch report from ZIP files."""
         try:
             # Get directory listing to find latest report
             async with self._session.get(
@@ -217,6 +294,7 @@ class AEMOClient:
                     seen.add(f["nemTime"])
                     unique_forecasts.append(f)
 
+            _LOGGER.debug("AEMO ZIP returned %d forecast periods for %s", len(unique_forecasts), region)
             return unique_forecasts
 
         except Exception as e:
