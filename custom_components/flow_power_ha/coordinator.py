@@ -131,6 +131,7 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 forecast_raw = await self._aemo_client.get_price_forecast(
                     self.region, periods=96
                 )
+                _LOGGER.info("AEMO forecast raw periods: %d for %s", len(forecast_raw) if forecast_raw else 0, self.region)
                 if forecast_raw:
                     data["forecast"] = calculate_forecast_prices(
                         forecast_raw,
@@ -142,6 +143,7 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         other_fees=self.other_fees,
                         include_gst=self.include_gst,
                     )
+                    _LOGGER.info("Calculated forecast periods: %d", len(data["forecast"]))
 
             elif self.price_source == PRICE_SOURCE_AMBER and self._amber_client:
                 current_prices = await self._amber_client.get_current_prices()

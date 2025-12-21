@@ -115,16 +115,23 @@ class AEMOClient:
             if forecast_data:
                 self._forecast_cache[region] = forecast_data
                 self._forecast_cache_time = now
+                _LOGGER.info("Cached %d forecast periods for %s", len(forecast_data), region)
                 return forecast_data[:periods]
-
-            return []
+            else:
+                _LOGGER.warning("No forecast data returned for %s", region)
+                # Don't cache empty results - try again next time
+                return []
 
         except Exception as e:
             _LOGGER.error("Error fetching AEMO forecast: %s", e)
-            return self._forecast_cache.get(region, [])[:periods]
+            cached = self._forecast_cache.get(region, [])
+            if cached:
+                _LOGGER.info("Returning %d cached forecast periods for %s", len(cached), region)
+            return cached[:periods]
 
     async def _fetch_predispatch_report(self, region: str) -> list[dict[str, Any]]:
         """Fetch and parse AEMO pre-dispatch report from ZIP files."""
+        _LOGGER.info("Fetching AEMO pre-dispatch report for %s", region)
         try:
             # Get directory listing to find latest report
             async with self._session.get(
@@ -141,6 +148,7 @@ class AEMOClient:
             import re
             pattern = r'PUBLIC_PREDISPATCH_\d{8}_\d{6}[^"]*\.zip'
             matches = re.findall(pattern, html)
+            _LOGGER.info("Found %d pre-dispatch files", len(matches))
 
             if not matches:
                 _LOGGER.warning("No pre-dispatch reports found")
@@ -225,7 +233,7 @@ class AEMOClient:
                     seen.add(f["nemTime"])
                     unique_forecasts.append(f)
 
-            _LOGGER.debug("AEMO ZIP returned %d forecast periods for %s", len(unique_forecasts), region)
+            _LOGGER.info("AEMO ZIP parsed %d forecast periods for %s", len(unique_forecasts), region)
             return unique_forecasts
 
         except Exception as e:
