@@ -1,0 +1,98 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Flow Power Sync",
+        "description": "Select your electricity price data source.",
+        "data": {
+          "price_source": "Price Source"
+        }
+      },
+      "amber": {
+        "title": "Amber Electric API",
+        "description": "Enter your Amber Electric API key. You can find or create one at {amber_url}",
+        "data": {
+          "amber_api_key": "API Key"
+        }
+      },
+      "amber_site": {
+        "title": "Select Amber Site",
+        "description": "Select the Amber site to use for pricing.",
+        "data": {
+          "amber_site_id": "Site"
+        }
+      },
+      "region": {
+        "title": "NEM Region",
+        "description": "Select your National Electricity Market region.",
+        "data": {
+          "nem_region": "Region"
+        }
+      },
+      "pricing": {
+        "title": "Pricing Configuration",
+        "description": "Configure your Flow Power pricing settings.",
+        "data": {
+          "base_rate": "Base Rate (c/kWh)",
+          "pea_enabled": "Enable PEA Calculation",
+          "pea_custom_value": "Custom PEA Value (c/kWh)",
+          "include_network_tariff": "Include Network Tariff",
+          "network_flat_rate": "Network Rate (c/kWh)",
+          "other_fees": "Other Fees (c/kWh)",
+          "include_gst": "Include GST (10%)"
+        },
+        "data_description": {
+          "base_rate": "Your Flow Power base energy rate",
+          "pea_enabled": "Apply Price Efficiency Adjustment (PEA = Wholesale - 9.7c)",
+          "pea_custom_value": "Override calculated PEA with a fixed value",
+          "include_network_tariff": "Add network charges to price (AEMO mode only)",
+          "network_flat_rate": "Flat network usage charge",
+          "other_fees": "Environmental and market fees",
+          "include_gst": "Add 10% GST to final price"
+        }
+      }
+    },
+    "error": {
+      "invalid_api_key": "Invalid Amber API key",
+      "no_sites": "No sites found for this API key",
+      "cannot_connect": "Failed to connect to API",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "This region is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Flow Power Settings",
+        "description": "Adjust your pricing configuration.",
+        "data": {
+          "base_rate": "Base Rate (c/kWh)",
+          "pea_enabled": "Enable PEA Calculation",
+          "pea_custom_value": "Custom PEA Value (c/kWh)",
+          "include_network_tariff": "Include Network Tariff",
+          "network_flat_rate": "Network Rate (c/kWh)",
+          "other_fees": "Other Fees (c/kWh)",
+          "include_gst": "Include GST (10%)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "import_price": {
+        "name": "Import Price"
+      },
+      "export_price": {
+        "name": "Export Price"
+      },
+      "wholesale_price": {
+        "name": "Wholesale Price"
+      },
+      "price_forecast": {
+        "name": "Price Forecast"
+      }
+    }
+  }
+}
