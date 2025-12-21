@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -26,6 +28,15 @@ from .const import (
 from .coordinator import FlowPowerCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
+# Region timezone mapping for ISO timestamp conversion
+REGION_TIMEZONES = {
+    "NSW1": "Australia/Sydney",
+    "QLD1": "Australia/Brisbane",
+    "VIC1": "Australia/Melbourne",
+    "SA1": "Australia/Adelaide",
+    "TAS1": "Australia/Hobart",
+}
 
 
 async def async_setup_entry(
@@ -232,19 +243,50 @@ class FlowPowerForecastSensor(FlowPowerBaseSensor):
             return self.coordinator.data["import_price"].get("final_dollars")
         return None
 
+    def _convert_to_iso_timestamp(self, timestamp: str) -> str:
+        """Convert AEMO timestamp format to ISO format with timezone.
+
+        Args:
+            timestamp: AEMO format '2025/12/22 09:30:00' or ISO format
+
+        Returns:
+            ISO format '2025-12-22 09:30:00+10:00'
+        """
+        if not timestamp:
+            return ""
+
+        try:
+            # Get timezone for region
+            tz_name = REGION_TIMEZONES.get(self._region, "Australia/Sydney")
+            tz = ZoneInfo(tz_name)
+
+            # Try AEMO format first: '2025/12/22 09:30:00'
+            if "/" in timestamp:
+                dt = datetime.strptime(timestamp, "%Y/%m/%d %H:%M:%S")
+                dt = dt.replace(tzinfo=tz)
+            else:
+                # Already ISO format or other
+                return timestamp
+
+            # Return ISO format: '2025-12-22 09:30:00+10:00'
+            return dt.strftime("%Y-%m-%d %H:%M:%S%z")
+        except (ValueError, TypeError):
+            return timestamp
+
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return forecast data for EMHASS.
 
-        EMHASS expects:
-        - forecast: list of prices in $/kWh
-        - timestamps: list of ISO timestamps
+        EMHASS expects either:
+        - forecast: list of prices in $/kWh (list format)
+        - forecast_dict: dict mapping ISO timestamps to prices (dict format)
         """
         attrs = {
             "region": self._region,
             "unit": "$/kWh",
             "forecast": [],
             "timestamps": [],
+            "forecast_dict": {},
             "forecast_cents": [],
             "wholesale_cents": [],
         }
@@ -252,20 +294,30 @@ class FlowPowerForecastSensor(FlowPowerBaseSensor):
         if self.coordinator.data and self.coordinator.data.get("forecast"):
             forecast = self.coordinator.data["forecast"]
 
-            # Build EMHASS-compatible arrays
+            # Build EMHASS-compatible arrays and dict
             prices = []
             timestamps = []
+            forecast_dict = {}
             prices_cents = []
             wholesale_cents = []
 
             for period in forecast:
-                prices.append(period.get("price_dollars", 0))
-                timestamps.append(period.get("timestamp", ""))
+                price = period.get("price_dollars", 0)
+                raw_ts = period.get("timestamp", "")
+                iso_ts = self._convert_to_iso_timestamp(raw_ts)
+
+                prices.append(price)
+                timestamps.append(iso_ts)
                 prices_cents.append(period.get("price_cents", 0))
                 wholesale_cents.append(period.get("wholesale_cents", 0))
 
+                # Build dictionary format for EMHASS
+                if iso_ts:
+                    forecast_dict[iso_ts] = price
+
             attrs["forecast"] = prices
             attrs["timestamps"] = timestamps
+            attrs["forecast_dict"] = forecast_dict
             attrs["forecast_cents"] = prices_cents
             attrs["wholesale_cents"] = wholesale_cents
             attrs["forecast_length"] = len(prices)
