@@ -13,10 +13,8 @@ from zoneinfo import ZoneInfo
 import aiohttp
 
 from .const import (
-    AEMO_5MIN_PREDISPATCH_URL,
     AEMO_CURRENT_PRICE_URL,
     AEMO_FORECAST_BASE_URL,
-    AEMO_PREDISPATCH_PRICES_URL,
     AMBER_API_BASE_URL,
     NEM_REGIONS,
 )
@@ -111,13 +109,8 @@ class AEMOClient:
             return cached[:periods] if cached else []
 
         try:
-            # Try JSON API first (more reliable)
-            forecast_data = await self._fetch_predispatch_json(region)
-
-            # Fall back to ZIP parsing if JSON fails
-            if not forecast_data:
-                _LOGGER.debug("JSON API returned no data, trying ZIP fallback")
-                forecast_data = await self._fetch_predispatch_report(region)
+            # Fetch from NEMWeb pre-dispatch reports (ZIP files)
+            forecast_data = await self._fetch_predispatch_report(region)
 
             if forecast_data:
                 self._forecast_cache[region] = forecast_data
@@ -129,76 +122,6 @@ class AEMOClient:
         except Exception as e:
             _LOGGER.error("Error fetching AEMO forecast: %s", e)
             return self._forecast_cache.get(region, [])[:periods]
-
-    async def _fetch_predispatch_json(self, region: str) -> list[dict[str, Any]]:
-        """Fetch pre-dispatch prices from AEMO JSON API."""
-        forecasts = []
-
-        try:
-            # Fetch 5-minute pre-dispatch data
-            async with self._session.get(
-                AEMO_5MIN_PREDISPATCH_URL,
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as response:
-                if response.status != 200:
-                    _LOGGER.debug("5MIN_PREDISPATCH API returned status %s", response.status)
-                else:
-                    data = await response.json()
-                    for item in data.get("5MIN_PREDISPATCH", []):
-                        if item.get("REGIONID") == region:
-                            timestamp = item.get("INTERVAL_DATETIME", "")
-                            rrp = float(item.get("RRP", 0))
-
-                            # Convert $/MWh to c/kWh
-                            price_cents = rrp / 10
-                            price_dollars = rrp / 1000
-
-                            forecasts.append({
-                                "nemTime": timestamp,
-                                "perKwh": price_cents,
-                                "wholesaleKWHPrice": price_dollars,
-                                "price_mwh": rrp,
-                            })
-
-            # Also fetch 30-minute pre-dispatch for longer horizon
-            async with self._session.get(
-                AEMO_PREDISPATCH_PRICES_URL,
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as response:
-                if response.status != 200:
-                    _LOGGER.debug("PREDISPATCH_PRICES API returned status %s", response.status)
-                else:
-                    data = await response.json()
-                    for item in data.get("PREDISPATCH_PRICES", []):
-                        if item.get("REGIONID") == region:
-                            timestamp = item.get("DATETIME", "") or item.get("INTERVAL_DATETIME", "")
-                            rrp = float(item.get("RRP", 0))
-
-                            # Convert $/MWh to c/kWh
-                            price_cents = rrp / 10
-                            price_dollars = rrp / 1000
-
-                            forecasts.append({
-                                "nemTime": timestamp,
-                                "perKwh": price_cents,
-                                "wholesaleKWHPrice": price_dollars,
-                                "price_mwh": rrp,
-                            })
-
-            # Sort by timestamp and remove duplicates
-            seen = set()
-            unique_forecasts = []
-            for f in sorted(forecasts, key=lambda x: x["nemTime"]):
-                if f["nemTime"] and f["nemTime"] not in seen:
-                    seen.add(f["nemTime"])
-                    unique_forecasts.append(f)
-
-            _LOGGER.debug("AEMO JSON API returned %d forecast periods for %s", len(unique_forecasts), region)
-            return unique_forecasts
-
-        except Exception as e:
-            _LOGGER.error("Error fetching AEMO JSON forecast: %s", e)
-            return []
 
     async def _fetch_predispatch_report(self, region: str) -> list[dict[str, Any]]:
         """Fetch and parse AEMO pre-dispatch report from ZIP files."""
@@ -248,30 +171,37 @@ class AEMOClient:
     def _parse_predispatch_zip(
         self, content: bytes, region: str
     ) -> list[dict[str, Any]]:
-        """Parse pre-dispatch ZIP file and extract price data."""
+        """Parse pre-dispatch ZIP file and extract price data.
+
+        CSV format: D,PDREGION,,5,PREDISPATCHSEQNO,RUNNO,REGIONID,PERIODID,RRP,...
+        Example: D,PDREGION,,5,"2025/12/22 09:00:00",1,QLD1,"2025/12/22 09:30:00",35.73
+        """
         forecasts = []
 
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as zf:
                 for filename in zf.namelist():
-                    if "REGION" in filename.upper():
+                    # Process CSV files
+                    if filename.upper().endswith('.CSV'):
                         with zf.open(filename) as f:
                             # Read CSV content
                             csv_content = f.read().decode("utf-8")
                             reader = csv.reader(io.StringIO(csv_content))
 
                             for row in reader:
-                                # Skip header rows and metadata
-                                if len(row) < 8 or row[0] not in ("D", "I"):
+                                # Skip rows that are too short
+                                if len(row) < 9:
                                     continue
 
-                                # PDREGION format: D,PREDISPATCH,REGION_SOLUTION,...
-                                if "REGION" in row[2].upper():
-                                    row_region = row[6] if len(row) > 6 else ""
+                                # Look for data rows with PDREGION format
+                                # Format: D,PDREGION,,5,seqno,runno,REGIONID,PERIODID,RRP
+                                if row[0] == "D" and row[1] == "PDREGION":
+                                    row_region = row[6]
                                     if row_region == region:
                                         try:
-                                            timestamp = row[7] if len(row) > 7 else ""
-                                            rrp = float(row[8]) if len(row) > 8 else 0
+                                            # PERIODID is the forecast timestamp
+                                            timestamp = row[7].strip('"')
+                                            rrp = float(row[8])
 
                                             # Convert $/MWh to c/kWh
                                             price_cents = rrp / 10
@@ -283,7 +213,8 @@ class AEMOClient:
                                                 "wholesaleKWHPrice": price_dollars,
                                                 "price_mwh": rrp,
                                             })
-                                        except (ValueError, IndexError):
+                                        except (ValueError, IndexError) as e:
+                                            _LOGGER.debug("Error parsing row: %s", e)
                                             continue
 
             # Sort by timestamp and remove duplicates
