@@ -14,18 +14,11 @@ from .const import (
     CONF_AMBER_API_KEY,
     CONF_AMBER_SITE_ID,
     CONF_BASE_RATE,
-    CONF_INCLUDE_GST,
-    CONF_INCLUDE_NETWORK_TARIFF,
     CONF_NEM_REGION,
-    CONF_NETWORK_FLAT_RATE,
-    CONF_OTHER_FEES,
     CONF_PEA_CUSTOM_VALUE,
     CONF_PEA_ENABLED,
     CONF_PRICE_SOURCE,
     DEFAULT_BASE_RATE,
-    DEFAULT_INCLUDE_GST,
-    DEFAULT_NETWORK_FLAT_RATE,
-    DEFAULT_OTHER_FEES,
     DOMAIN,
     PRICE_SOURCE_AEMO,
     PRICE_SOURCE_AMBER,
@@ -67,10 +60,6 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.base_rate = config.get(CONF_BASE_RATE, DEFAULT_BASE_RATE)
         self.pea_enabled = config.get(CONF_PEA_ENABLED, True)
         self.pea_custom_value = config.get(CONF_PEA_CUSTOM_VALUE)
-        self.include_network_tariff = config.get(CONF_INCLUDE_NETWORK_TARIFF, False)
-        self.network_flat_rate = config.get(CONF_NETWORK_FLAT_RATE, DEFAULT_NETWORK_FLAT_RATE)
-        self.other_fees = config.get(CONF_OTHER_FEES, DEFAULT_OTHER_FEES)
-        self.include_gst = config.get(CONF_INCLUDE_GST, DEFAULT_INCLUDE_GST)
 
         # Amber config
         self.amber_api_key = config.get(CONF_AMBER_API_KEY)
@@ -117,10 +106,6 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         base_rate=self.base_rate,
                         pea_enabled=self.pea_enabled,
                         pea_custom_value=self.pea_custom_value,
-                        include_network_tariff=self.include_network_tariff,
-                        network_flat_rate=self.network_flat_rate,
-                        other_fees=self.other_fees,
-                        include_gst=self.include_gst,
                     )
 
                     data["import_price"] = import_info
@@ -138,10 +123,6 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         base_rate=self.base_rate,
                         pea_enabled=self.pea_enabled,
                         pea_custom_value=self.pea_custom_value,
-                        include_network_tariff=self.include_network_tariff,
-                        network_flat_rate=self.network_flat_rate,
-                        other_fees=self.other_fees,
-                        include_gst=self.include_gst,
                     )
                     _LOGGER.info("Calculated forecast periods: %d", len(data["forecast"]))
 
@@ -159,10 +140,6 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             base_rate=self.base_rate,
                             pea_enabled=self.pea_enabled,
                             pea_custom_value=self.pea_custom_value,
-                            include_network_tariff=self.include_network_tariff,
-                            network_flat_rate=self.network_flat_rate,
-                            other_fees=self.other_fees,
-                            include_gst=self.include_gst,
                         )
 
                         data["import_price"] = import_info
@@ -185,10 +162,6 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         base_rate=self.base_rate,
                         pea_enabled=self.pea_enabled,
                         pea_custom_value=self.pea_custom_value,
-                        include_network_tariff=self.include_network_tariff,
-                        network_flat_rate=self.network_flat_rate,
-                        other_fees=self.other_fees,
-                        include_gst=self.include_gst,
                     )
 
             # Calculate export price (always based on region and time)

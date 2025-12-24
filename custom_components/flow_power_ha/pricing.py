@@ -6,13 +6,9 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from .const import (
-    DEFAULT_BASE_RATE,
-    DEFAULT_NETWORK_FLAT_RATE,
-    DEFAULT_OTHER_FEES,
     FLOW_POWER_DEFAULT_BASE_RATE,
     FLOW_POWER_EXPORT_RATES,
     FLOW_POWER_PEA_OFFSET,
-    GST_RATE,
     HAPPY_HOUR_END,
     HAPPY_HOUR_START,
 )
@@ -37,25 +33,20 @@ def calculate_import_price(
     base_rate: float = FLOW_POWER_DEFAULT_BASE_RATE,
     pea_enabled: bool = True,
     pea_custom_value: float | None = None,
-    include_network_tariff: bool = False,
-    network_flat_rate: float = DEFAULT_NETWORK_FLAT_RATE,
-    other_fees: float = DEFAULT_OTHER_FEES,
-    include_gst: bool = True,
 ) -> dict[str, float]:
     """Calculate the final import price using Flow Power PEA formula.
 
     Final Rate = Base Rate + PEA
     Where PEA = Wholesale - 9.7 (or custom value if provided)
 
+    The base_rate should be entered as it appears in the PDS (GST inclusive,
+    with network charges already built in).
+
     Args:
         wholesale_cents: Wholesale price in c/kWh
-        base_rate: Flow Power base rate in c/kWh (default 34.0)
+        base_rate: Flow Power base rate in c/kWh (default 34.0, GST inclusive)
         pea_enabled: Whether to apply PEA calculation
         pea_custom_value: Optional fixed PEA override in c/kWh
-        include_network_tariff: Whether to add network tariff (for AEMO mode)
-        network_flat_rate: Network charge in c/kWh
-        other_fees: Environmental/market fees in c/kWh
-        include_gst: Whether to include 10% GST
 
     Returns:
         Dict with price breakdown:
@@ -65,18 +56,12 @@ def calculate_import_price(
             'base_rate': 34.0,        # Base rate in c/kWh
             'pea': -1.5,              # PEA adjustment in c/kWh
             'wholesale': 8.2,         # Wholesale in c/kWh
-            'network': 0.0,           # Network charge in c/kWh
-            'other_fees': 0.0,        # Other fees in c/kWh
-            'gst': 0.0,               # GST amount in c/kWh
         }
     """
     result = {
         "wholesale": wholesale_cents,
         "base_rate": base_rate,
         "pea": 0.0,
-        "network": 0.0,
-        "other_fees": 0.0,
-        "gst": 0.0,
         "final_cents": 0.0,
         "final_dollars": 0.0,
     }
@@ -90,20 +75,9 @@ def calculate_import_price(
 
         result["pea"] = pea
         final_cents = base_rate + pea
-    elif include_network_tariff:
-        # AEMO mode without PEA: wholesale + network + fees
-        result["network"] = network_flat_rate
-        result["other_fees"] = other_fees
-        final_cents = wholesale_cents + network_flat_rate + other_fees
     else:
         # Just base rate
         final_cents = base_rate
-
-    # Apply GST if enabled
-    if include_gst and include_network_tariff:
-        gst_amount = final_cents * GST_RATE
-        result["gst"] = gst_amount
-        final_cents += gst_amount
 
     # Ensure non-negative (Tesla restriction)
     final_cents = max(0.0, final_cents)
@@ -187,16 +161,14 @@ def calculate_forecast_prices(
     base_rate: float = FLOW_POWER_DEFAULT_BASE_RATE,
     pea_enabled: bool = True,
     pea_custom_value: float | None = None,
-    include_network_tariff: bool = False,
-    network_flat_rate: float = DEFAULT_NETWORK_FLAT_RATE,
-    other_fees: float = DEFAULT_OTHER_FEES,
-    include_gst: bool = True,
 ) -> list[dict[str, Any]]:
     """Calculate import prices for a forecast array.
 
     Args:
         forecast_data: List of forecast periods with wholesale prices
-        Other args same as calculate_import_price
+        base_rate: Flow Power base rate in c/kWh (GST inclusive)
+        pea_enabled: Whether to apply PEA calculation
+        pea_custom_value: Optional fixed PEA override in c/kWh
 
     Returns:
         List of forecast periods with calculated prices:
@@ -229,10 +201,6 @@ def calculate_forecast_prices(
             base_rate=base_rate,
             pea_enabled=pea_enabled,
             pea_custom_value=pea_custom_value,
-            include_network_tariff=include_network_tariff,
-            network_flat_rate=network_flat_rate,
-            other_fees=other_fees,
-            include_gst=include_gst,
         )
 
         # Extract timestamp

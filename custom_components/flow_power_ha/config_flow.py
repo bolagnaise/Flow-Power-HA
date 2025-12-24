@@ -16,18 +16,11 @@ from .const import (
     CONF_AMBER_API_KEY,
     CONF_AMBER_SITE_ID,
     CONF_BASE_RATE,
-    CONF_INCLUDE_GST,
-    CONF_INCLUDE_NETWORK_TARIFF,
     CONF_NEM_REGION,
-    CONF_NETWORK_FLAT_RATE,
-    CONF_OTHER_FEES,
     CONF_PEA_CUSTOM_VALUE,
     CONF_PEA_ENABLED,
     CONF_PRICE_SOURCE,
     DEFAULT_BASE_RATE,
-    DEFAULT_INCLUDE_GST,
-    DEFAULT_NETWORK_FLAT_RATE,
-    DEFAULT_OTHER_FEES,
     DOMAIN,
     NEM_REGIONS,
     PRICE_SOURCE_AEMO,
@@ -190,7 +183,7 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     selector.NumberSelectorConfig(
                         min=0,
                         max=100,
-                        step=0.1,
+                        step=0.01,
                         unit_of_measurement="c/kWh",
                         mode=selector.NumberSelectorMode.BOX,
                     )
@@ -200,31 +193,11 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     selector.NumberSelectorConfig(
                         min=-50,
                         max=50,
-                        step=0.1,
+                        step=0.01,
                         unit_of_measurement="c/kWh",
                         mode=selector.NumberSelectorMode.BOX,
                     )
                 ),
-                vol.Required(CONF_INCLUDE_NETWORK_TARIFF, default=False): bool,
-                vol.Optional(CONF_NETWORK_FLAT_RATE, default=DEFAULT_NETWORK_FLAT_RATE): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=0,
-                        max=50,
-                        step=0.1,
-                        unit_of_measurement="c/kWh",
-                        mode=selector.NumberSelectorMode.BOX,
-                    )
-                ),
-                vol.Optional(CONF_OTHER_FEES, default=DEFAULT_OTHER_FEES): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=0,
-                        max=20,
-                        step=0.1,
-                        unit_of_measurement="c/kWh",
-                        mode=selector.NumberSelectorMode.BOX,
-                    )
-                ),
-                vol.Required(CONF_INCLUDE_GST, default=DEFAULT_INCLUDE_GST): bool,
             }),
         )
 
@@ -259,7 +232,7 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
                     selector.NumberSelectorConfig(
                         min=0,
                         max=100,
-                        step=0.1,
+                        step=0.01,
                         unit_of_measurement="c/kWh",
                         mode=selector.NumberSelectorMode.BOX,
                     )
@@ -275,42 +248,10 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
                     selector.NumberSelectorConfig(
                         min=-50,
                         max=50,
-                        step=0.1,
+                        step=0.01,
                         unit_of_measurement="c/kWh",
                         mode=selector.NumberSelectorMode.BOX,
                     )
                 ),
-                vol.Required(
-                    CONF_INCLUDE_NETWORK_TARIFF,
-                    default=current.get(CONF_INCLUDE_NETWORK_TARIFF, False),
-                ): bool,
-                vol.Optional(
-                    CONF_NETWORK_FLAT_RATE,
-                    default=current.get(CONF_NETWORK_FLAT_RATE, DEFAULT_NETWORK_FLAT_RATE),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=0,
-                        max=50,
-                        step=0.1,
-                        unit_of_measurement="c/kWh",
-                        mode=selector.NumberSelectorMode.BOX,
-                    )
-                ),
-                vol.Optional(
-                    CONF_OTHER_FEES,
-                    default=current.get(CONF_OTHER_FEES, DEFAULT_OTHER_FEES),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=0,
-                        max=20,
-                        step=0.1,
-                        unit_of_measurement="c/kWh",
-                        mode=selector.NumberSelectorMode.BOX,
-                    )
-                ),
-                vol.Required(
-                    CONF_INCLUDE_GST,
-                    default=current.get(CONF_INCLUDE_GST, DEFAULT_INCLUDE_GST),
-                ): bool,
             }),
         )

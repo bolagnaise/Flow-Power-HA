@@ -31,24 +31,16 @@
       },
       "pricing": {
         "title": "Pricing Configuration",
-        "description": "Configure your Flow Power pricing settings.",
+        "description": "Configure your Flow Power pricing settings. Enter rates as they appear in your PDS (GST inclusive).",
         "data": {
           "base_rate": "Base Rate (c/kWh)",
           "pea_enabled": "Enable PEA Calculation",
-          "pea_custom_value": "Custom PEA Value (c/kWh)",
-          "include_network_tariff": "Include Network Tariff",
-          "network_flat_rate": "Network Rate (c/kWh)",
-          "other_fees": "Other Fees (c/kWh)",
-          "include_gst": "Include GST (10%)"
+          "pea_custom_value": "Custom PEA Value (c/kWh)"
         },
         "data_description": {
-          "base_rate": "Your Flow Power base energy rate",
+          "base_rate": "Your Flow Power base energy rate (GST inclusive)",
           "pea_enabled": "Apply Price Efficiency Adjustment (PEA = Wholesale - 9.7c)",
-          "pea_custom_value": "Override calculated PEA with a fixed value",
-          "include_network_tariff": "Add network charges to price (AEMO mode only)",
-          "network_flat_rate": "Flat network usage charge",
-          "other_fees": "Environmental and market fees",
-          "include_gst": "Add 10% GST to final price"
+          "pea_custom_value": "Override calculated PEA with a fixed value"
         }
       }
     },
@@ -66,15 +58,11 @@
     "step": {
       "init": {
         "title": "Flow Power Settings",
-        "description": "Adjust your pricing configuration.",
+        "description": "Adjust your pricing configuration. Enter rates as they appear in your PDS (GST inclusive).",
         "data": {
           "base_rate": "Base Rate (c/kWh)",
           "pea_enabled": "Enable PEA Calculation",
-          "pea_custom_value": "Custom PEA Value (c/kWh)",
-          "include_network_tariff": "Include Network Tariff",
-          "network_flat_rate": "Network Rate (c/kWh)",
-          "other_fees": "Other Fees (c/kWh)",
-          "include_gst": "Include GST (10%)"
+          "pea_custom_value": "Custom PEA Value (c/kWh)"
         }
       }
     }

@@ -43,16 +43,9 @@ CONF_NEM_REGION = "nem_region"
 CONF_BASE_RATE = "base_rate"
 CONF_PEA_ENABLED = "pea_enabled"
 CONF_PEA_CUSTOM_VALUE = "pea_custom_value"
-CONF_INCLUDE_NETWORK_TARIFF = "include_network_tariff"
-CONF_NETWORK_FLAT_RATE = "network_flat_rate"
-CONF_OTHER_FEES = "other_fees"
-CONF_INCLUDE_GST = "include_gst"
 
 # Default Configuration Values
 DEFAULT_BASE_RATE = 34.0
-DEFAULT_NETWORK_FLAT_RATE = 8.0
-DEFAULT_OTHER_FEES = 1.5
-DEFAULT_INCLUDE_GST = True
 
 # Update Intervals (seconds)
 UPDATE_INTERVAL_CURRENT = 300  # 5 minutes for current prices
@@ -71,5 +64,3 @@ AEMO_PREDISPATCH_PRICES_URL = "https://visualisations.aemo.com.au/aemo/apps/api/
 AEMO_FORECAST_BASE_URL = "https://nemweb.com.au/Reports/Current/Predispatch_Reports/"
 AMBER_API_BASE_URL = "https://api.amber.com.au/v1"
 
-# GST Rate (Australia)
-GST_RATE = 0.10  # 10%
