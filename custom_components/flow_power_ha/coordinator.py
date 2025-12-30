@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 import aiohttp
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api_clients import AEMOClient, AmberClient
@@ -32,6 +33,11 @@ from .pricing import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# AEMO publishes data ~80-90 seconds after each 5-minute interval
+# Poll at 90 seconds past each 5-minute mark for fresh data
+AEMO_POLL_SECONDS = [90]  # :01:30, :06:30, :11:30, etc.
+AEMO_POLL_MINUTES = [1, 6, 11, 16, 21, 26, 31, 36, 41, 46, 51, 56]
+
 
 class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Coordinator for fetching Flow Power price data."""
@@ -42,6 +48,7 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         config: dict[str, Any],
     ) -> None:
         """Initialize the coordinator."""
+        # Use longer fallback interval - primary updates are clock-aligned
         super().__init__(
             hass,
             _LOGGER,
@@ -53,6 +60,7 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._session: aiohttp.ClientSession | None = None
         self._aemo_client: AEMOClient | None = None
         self._amber_client: AmberClient | None = None
+        self._unsub_time_listeners: list = []
 
         # Configuration
         self.price_source = config.get(CONF_PRICE_SOURCE, PRICE_SOURCE_AEMO)
@@ -64,6 +72,48 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Amber config
         self.amber_api_key = config.get(CONF_AMBER_API_KEY)
         self.amber_site_id = config.get(CONF_AMBER_SITE_ID)
+
+        # Set up clock-aligned polling
+        self._setup_time_listeners()
+
+    def _setup_time_listeners(self) -> None:
+        """Set up clock-aligned time listeners for price updates."""
+        # AEMO data updates: Poll at 90 seconds past each 5-minute interval
+        # e.g., 00:01:30, 00:06:30, 00:11:30, etc.
+        unsub_aemo = async_track_time_change(
+            self.hass,
+            self._handle_aemo_update,
+            minute=AEMO_POLL_MINUTES,
+            second=30,
+        )
+        self._unsub_time_listeners.append(unsub_aemo)
+
+        # Happy Hour transitions: Update exactly at 17:30:00 and 19:30:00
+        unsub_happy_hour = async_track_time_change(
+            self.hass,
+            self._handle_happy_hour_update,
+            hour=[17, 19],
+            minute=[30],
+            second=[0],
+        )
+        self._unsub_time_listeners.append(unsub_happy_hour)
+
+        _LOGGER.info(
+            "Flow Power: Clock-aligned polling enabled - AEMO at :01:30/:06:30/etc, "
+            "Happy Hour at 17:30:00/19:30:00"
+        )
+
+    @callback
+    def _handle_aemo_update(self, now: datetime) -> None:
+        """Handle clock-aligned AEMO update."""
+        _LOGGER.debug("Flow Power: Clock-aligned AEMO update triggered at %s", now)
+        self.hass.async_create_task(self.async_request_refresh())
+
+    @callback
+    def _handle_happy_hour_update(self, now: datetime) -> None:
+        """Handle Happy Hour transition update."""
+        _LOGGER.info("Flow Power: Happy Hour transition update at %s", now)
+        self.hass.async_create_task(self.async_request_refresh())
 
     async def _async_setup(self) -> None:
         """Set up the coordinator."""
@@ -175,6 +225,11 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_shutdown(self) -> None:
         """Shutdown the coordinator."""
+        # Clean up time listeners
+        for unsub in self._unsub_time_listeners:
+            unsub()
+        self._unsub_time_listeners.clear()
+
         if self._session:
             await self._session.close()
             self._session = None
