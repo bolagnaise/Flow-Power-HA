@@ -33,10 +33,8 @@ from .pricing import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# AEMO publishes data ~80-90 seconds after each 5-minute interval
-# Poll at 90 seconds past each 5-minute mark for fresh data
-AEMO_POLL_SECONDS = [90]  # :01:30, :06:30, :11:30, etc.
-AEMO_POLL_MINUTES = [1, 6, 11, 16, 21, 26, 31, 36, 41, 46, 51, 56]
+# AEMO polling - every 30 seconds for more responsive updates
+AEMO_POLL_SECONDS = [0, 30]  # Poll at :00 and :30 of every minute
 
 
 class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -78,13 +76,11 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _setup_time_listeners(self) -> None:
         """Set up clock-aligned time listeners for price updates."""
-        # AEMO data updates: Poll at 90 seconds past each 5-minute interval
-        # e.g., 00:01:30, 00:06:30, 00:11:30, etc.
+        # AEMO data updates: Poll every 30 seconds
         unsub_aemo = async_track_time_change(
             self.hass,
             self._handle_aemo_update,
-            minute=AEMO_POLL_MINUTES,
-            second=30,
+            second=AEMO_POLL_SECONDS,
         )
         self._unsub_time_listeners.append(unsub_aemo)
 
@@ -99,7 +95,7 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._unsub_time_listeners.append(unsub_happy_hour)
 
         _LOGGER.info(
-            "Flow Power: Clock-aligned polling enabled - AEMO at :01:30/:06:30/etc, "
+            "Flow Power: Polling enabled - AEMO every 30 seconds, "
             "Happy Hour at 17:30:00/19:30:00"
         )
 
