@@ -21,11 +21,13 @@ from .const import (
     CONF_NEM_REGION,
     DOMAIN,
     FLOW_POWER_EXPORT_RATES,
+    FLOW_POWER_MARKET_AVG,
     HAPPY_HOUR_END,
     HAPPY_HOUR_START,
     SENSOR_TYPE_EXPORT_PRICE,
     SENSOR_TYPE_IMPORT_PRICE,
     SENSOR_TYPE_PRICE_FORECAST,
+    SENSOR_TYPE_TWAP,
     SENSOR_TYPE_WHOLESALE_PRICE,
 )
 from .coordinator import FlowPowerCoordinator
@@ -56,6 +58,7 @@ async def async_setup_entry(
         FlowPowerExportPriceSensor(coordinator, config_entry, region),
         FlowPowerWholesaleSensor(coordinator, config_entry, region),
         FlowPowerForecastSensor(coordinator, config_entry, region),
+        FlowPowerTWAPSensor(coordinator, config_entry, region),
     ]
 
     async_add_entities(entities)
@@ -169,6 +172,7 @@ class FlowPowerImportPriceSensor(FlowPowerBaseSensor):
                 "base_rate_cents": price_info.get("base_rate"),
                 "pea_cents": price_info.get("pea"),
                 "wholesale_cents": price_info.get("wholesale"),
+                "twap_used": price_info.get("twap_used"),
                 "network_cents": price_info.get("network"),
                 "gst_cents": price_info.get("gst"),
             })
@@ -384,5 +388,54 @@ class FlowPowerForecastSensor(FlowPowerBaseSensor):
 
         if self.coordinator.data:
             attrs["last_update"] = self.coordinator.data.get("last_update")
+
+        return attrs
+
+
+class FlowPowerTWAPSensor(FlowPowerBaseSensor):
+    """Sensor for 30-day Time Weighted Average Price (TWAP)."""
+
+    _attr_name = "TWAP (30-day Average)"
+    _attr_native_unit_of_measurement = "c/kWh"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:chart-timeline-variant-shimmer"
+
+    def __init__(
+        self,
+        coordinator: FlowPowerCoordinator,
+        config_entry: ConfigEntry,
+        region: str,
+    ) -> None:
+        """Initialize the TWAP sensor."""
+        super().__init__(coordinator, config_entry, region, SENSOR_TYPE_TWAP)
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the current TWAP in c/kWh."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("twap")
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return TWAP metadata."""
+        attrs = {
+            "region": self._region,
+            "unit": "c/kWh",
+            "window_days": 30,
+            "default_market_avg": FLOW_POWER_MARKET_AVG,
+        }
+
+        if self.coordinator.data:
+            twap = self.coordinator.data.get("twap")
+            days = self.coordinator.data.get("twap_days", 0)
+            samples = self.coordinator.data.get("twap_samples", 0)
+
+            attrs["days_of_data"] = days
+            attrs["sample_count"] = samples
+            attrs["using_fallback"] = twap is None
+
+            if twap is not None:
+                attrs["twap_dollars"] = round(twap / 100, 4)
 
         return attrs

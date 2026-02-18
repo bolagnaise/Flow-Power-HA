@@ -6,26 +6,34 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from .const import (
+    FLOW_POWER_BENCHMARK,
     FLOW_POWER_DEFAULT_BASE_RATE,
     FLOW_POWER_EXPORT_RATES,
-    FLOW_POWER_PEA_OFFSET,
+    FLOW_POWER_MARKET_AVG,
     HAPPY_HOUR_END,
     HAPPY_HOUR_START,
 )
 
 
-def calculate_pea(wholesale_cents: float) -> float:
+def calculate_pea(wholesale_cents: float, twap: float | None = None) -> float:
     """Calculate the Price Efficiency Adjustment (PEA).
 
-    PEA = Wholesale (c/kWh) - 9.7 (Market Avg + Benchmark)
+    PEA = Wholesale - TWAP - BPEA
+
+    Where:
+        TWAP = Time Weighted Average Price (dynamic 30-day rolling average,
+               or default 8.0 c/kWh when insufficient data)
+        BPEA = Benchmark Price Efficiency Adjustment (1.7 c/kWh)
 
     Args:
         wholesale_cents: Wholesale price in c/kWh
+        twap: Dynamic TWAP in c/kWh, or None to use default (8.0)
 
     Returns:
         PEA value in c/kWh (can be negative)
     """
-    return wholesale_cents - FLOW_POWER_PEA_OFFSET
+    market_avg = twap if twap is not None else FLOW_POWER_MARKET_AVG
+    return wholesale_cents - market_avg - FLOW_POWER_BENCHMARK
 
 
 def calculate_import_price(
@@ -33,11 +41,12 @@ def calculate_import_price(
     base_rate: float = FLOW_POWER_DEFAULT_BASE_RATE,
     pea_enabled: bool = True,
     pea_custom_value: float | None = None,
+    twap: float | None = None,
 ) -> dict[str, float]:
     """Calculate the final import price using Flow Power PEA formula.
 
     Final Rate = Base Rate + PEA
-    Where PEA = Wholesale - 9.7 (or custom value if provided)
+    Where PEA = Wholesale - TWAP - BPEA
 
     The base_rate should be entered as it appears in the PDS (GST inclusive,
     with network charges already built in).
@@ -47,6 +56,7 @@ def calculate_import_price(
         base_rate: Flow Power base rate in c/kWh (default 34.0, GST inclusive)
         pea_enabled: Whether to apply PEA calculation
         pea_custom_value: Optional fixed PEA override in c/kWh
+        twap: Dynamic TWAP in c/kWh, or None to use default (8.0)
 
     Returns:
         Dict with price breakdown:
@@ -54,24 +64,28 @@ def calculate_import_price(
             'final_cents': 32.5,      # Final price in c/kWh
             'final_dollars': 0.325,   # Final price in $/kWh
             'base_rate': 34.0,        # Base rate in c/kWh
-            'pea': -1.5,              # PEA adjustment in c/kWh
+            'pea': -1.5,             # PEA adjustment in c/kWh
             'wholesale': 8.2,         # Wholesale in c/kWh
+            'twap_used': 7.5,        # TWAP value used in calculation
         }
     """
+    twap_used = twap if twap is not None else FLOW_POWER_MARKET_AVG
+
     result = {
         "wholesale": wholesale_cents,
         "base_rate": base_rate,
         "pea": 0.0,
+        "twap_used": twap_used,
         "final_cents": 0.0,
         "final_dollars": 0.0,
     }
 
     if pea_enabled:
-        # Use custom PEA if provided, otherwise calculate
+        # Use custom PEA if provided, otherwise calculate with dynamic TWAP
         if pea_custom_value is not None:
             pea = pea_custom_value
         else:
-            pea = calculate_pea(wholesale_cents)
+            pea = calculate_pea(wholesale_cents, twap=twap)
 
         result["pea"] = pea
         final_cents = base_rate + pea
@@ -161,6 +175,7 @@ def calculate_forecast_prices(
     base_rate: float = FLOW_POWER_DEFAULT_BASE_RATE,
     pea_enabled: bool = True,
     pea_custom_value: float | None = None,
+    twap: float | None = None,
 ) -> list[dict[str, Any]]:
     """Calculate import prices for a forecast array.
 
@@ -169,6 +184,7 @@ def calculate_forecast_prices(
         base_rate: Flow Power base rate in c/kWh (GST inclusive)
         pea_enabled: Whether to apply PEA calculation
         pea_custom_value: Optional fixed PEA override in c/kWh
+        twap: Dynamic TWAP in c/kWh, or None to use default
 
     Returns:
         List of forecast periods with calculated prices:
@@ -201,6 +217,7 @@ def calculate_forecast_prices(
             base_rate=base_rate,
             pea_enabled=pea_enabled,
             pea_custom_value=pea_custom_value,
+            twap=twap,
         )
 
         # Extract timestamp

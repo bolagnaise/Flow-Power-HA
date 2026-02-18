@@ -4,9 +4,8 @@ from datetime import time
 DOMAIN = "flow_power_ha"
 
 # PEA (Price Efficiency Adjustment) Constants
-FLOW_POWER_MARKET_AVG = 8.0  # Market TWAP average (c/kWh)
+FLOW_POWER_MARKET_AVG = 8.0  # Default TWAP fallback when insufficient data (c/kWh)
 FLOW_POWER_BENCHMARK = 1.7  # BPEA - benchmark customer performance (c/kWh)
-FLOW_POWER_PEA_OFFSET = 9.7  # Combined: MARKET_AVG + BENCHMARK (c/kWh)
 FLOW_POWER_DEFAULT_BASE_RATE = 34.0  # Default Flow Power base rate (c/kWh)
 
 # NEM Regions
@@ -56,6 +55,11 @@ SENSOR_TYPE_IMPORT_PRICE = "import_price"
 SENSOR_TYPE_EXPORT_PRICE = "export_price"
 SENSOR_TYPE_WHOLESALE_PRICE = "wholesale_price"
 SENSOR_TYPE_PRICE_FORECAST = "price_forecast"
+SENSOR_TYPE_TWAP = "twap"
+
+# TWAP (Time Weighted Average Price) Settings
+DEFAULT_TWAP_WINDOW_DAYS = 30  # Rolling window for TWAP calculation
+MIN_TWAP_SAMPLES = 12  # Minimum samples (~1 hour) before using dynamic TWAP
 
 # API URLs
 # Legacy JSON API (slower)

@@ -39,7 +39,7 @@
         },
         "data_description": {
           "base_rate": "Your Flow Power base energy rate (GST inclusive)",
-          "pea_enabled": "Apply Price Efficiency Adjustment (PEA = Wholesale - 9.7c)",
+          "pea_enabled": "Apply Price Efficiency Adjustment (PEA = Wholesale - TWAP - 1.7c)",
           "pea_custom_value": "Override calculated PEA with a fixed value"
         }
       }
@@ -80,6 +80,9 @@
       },
       "price_forecast": {
         "name": "Price Forecast"
+      },
+      "twap": {
+        "name": "TWAP (30-day Average)"
       }
     }
   }
