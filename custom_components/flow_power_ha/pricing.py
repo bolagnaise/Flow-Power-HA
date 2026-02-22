@@ -202,9 +202,9 @@ def calculate_forecast_prices(
 
     for period in forecast_data:
         # Extract wholesale price (handle both Amber and AEMO formats)
-        if "wholesaleKWHPrice" in period:
-            # Amber format: $/kWh
-            wholesale_cents = period["wholesaleKWHPrice"] * 100
+        if "spotPerKwh" in period:
+            # Amber format: spot price in c/kWh
+            wholesale_cents = period["spotPerKwh"]
         elif "perKwh" in period:
             # AEMO format: c/kWh
             wholesale_cents = period["perKwh"]

@@ -8,7 +8,8 @@ A Home Assistant integration that provides Flow Power electricity pricing sensor
 - **PEA Calculation**: Implements Flow Power's Price Efficiency Adjustment formula
 - **Happy Hour Export**: Automatic export pricing based on Flow Power Happy Hour (5:30pm-7:30pm)
 - **EMHASS Compatible**: Price forecast sensor with attributes for EMHASS integration
-- **Configurable**: Base rates, network tariffs, and GST options
+- **Dynamic TWAP**: Auto-calculated 30-day rolling wholesale average for accurate PEA
+- **Configurable**: Base rates and PEA settings
 
 ## Installation
 
@@ -37,13 +38,9 @@ Choose between:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| Base Rate | 34.0 c/kWh | Your Flow Power base energy rate |
+| Base Rate | 34.0 c/kWh | Your Flow Power base energy rate (GST inclusive, as per PDS) |
 | PEA Enabled | Yes | Apply Price Efficiency Adjustment |
-| PEA Custom Value | - | Override calculated PEA with fixed value |
-| Include Network Tariff | No | Add network charges (AEMO mode) |
-| Network Rate | 8.0 c/kWh | Flat network usage charge |
-| Other Fees | 1.5 c/kWh | Environmental and market fees |
-| Include GST | Yes | Add 10% GST to final price |
+| PEA Custom Value | - | Override calculated PEA with fixed value (c/kWh) |
 
 ## Sensors
 
@@ -51,8 +48,9 @@ Choose between:
 |--------|------|-------------|
 | `sensor.flow_power_import_price` | $/kWh | Current import price with PEA |
 | `sensor.flow_power_export_price` | $/kWh | Current export price (Happy Hour aware) |
-| `sensor.flow_power_wholesale_price` | c/kWh | Raw wholesale price |
+| `sensor.flow_power_wholesale_price` | c/kWh | Raw wholesale spot price |
 | `sensor.flow_power_price_forecast` | $/kWh | Price forecast for EMHASS |
+| `sensor.flow_power_twap` | c/kWh | 30-day rolling average wholesale price (TWAP) |
 
 ## EMHASS Integration
 
@@ -82,12 +80,14 @@ emhass:
 ### PEA (Price Efficiency Adjustment)
 
 ```
-PEA = Wholesale (c/kWh) - 9.7
+PEA = Wholesale - TWAP - BPEA
 Final Rate = Base Rate + PEA
 
 Where:
-- 9.7 = Market Average (8.0) + Benchmark (1.7)
+- TWAP = 30-day rolling average of wholesale spot prices (dynamic)
+- BPEA = 1.7 c/kWh (Benchmark Price Efficiency Adjustment)
 - Default Base Rate = 34.0 c/kWh
+- When insufficient data (<1 hour), TWAP defaults to 8.0 c/kWh
 ```
 
 ### Export Rates (Happy Hour)

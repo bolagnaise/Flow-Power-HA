@@ -425,6 +425,9 @@ class AmberClient:
                 headers=self._headers,
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as response:
+                if response.status == 401 or response.status == 403:
+                    _LOGGER.error("Amber API authentication failed (status %s) - check your API key", response.status)
+                    return []
                 if response.status != 200:
                     _LOGGER.error("Amber prices API returned status %s", response.status)
                     return []
@@ -470,6 +473,9 @@ class AmberClient:
                 params=params,
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as response:
+                if response.status == 401 or response.status == 403:
+                    _LOGGER.error("Amber forecast API authentication failed (status %s) - check your API key", response.status)
+                    return []
                 if response.status != 200:
                     _LOGGER.error("Amber forecast API returned status %s", response.status)
                     return []
@@ -489,6 +495,5 @@ class AmberClient:
         Returns:
             Wholesale price in c/kWh
         """
-        # Amber provides wholesaleKWHPrice in $/kWh, convert to c/kWh
-        wholesale = price_data.get("wholesaleKWHPrice", 0)
-        return wholesale * 100  # Convert $/kWh to c/kWh
+        # Amber provides spotPerKwh in c/kWh (NEM spot price including GST)
+        return price_data.get("spotPerKwh", 0)
