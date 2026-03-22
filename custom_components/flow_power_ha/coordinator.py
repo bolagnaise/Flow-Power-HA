@@ -154,6 +154,11 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Pick up authenticated portal client from config/options flow if available
         pending = self.hass.data.get(DOMAIN, {}).pop("_pending_fp_client", None)
+        _LOGGER.debug(
+            "Flow Power: Setup - price_source=%s, fp_enabled=%s, pending_client=%s",
+            self.price_source, self.fp_enabled,
+            f"authenticated={pending.is_authenticated}" if pending else "None",
+        )
         if pending and pending.is_authenticated:
             self._fp_client = pending
             _LOGGER.info("Flow Power: Using authenticated portal client from config flow")
