@@ -81,7 +81,8 @@
           "base_rate": "Base Rate (c/kWh)",
           "pea_enabled": "Enable PEA Calculation",
           "pea_custom_value": "Custom PEA Value (c/kWh)",
-          "reauth_flowpower": "Re-authenticate with Flow Power portal"
+          "reauth_flowpower": "Re-authenticate with Flow Power portal",
+          "connect_flowpower": "Connect Flow Power portal account"
         }
       },
       "flowpower_reauth": {

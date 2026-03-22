@@ -80,9 +80,10 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.amber_api_key = config.get(CONF_AMBER_API_KEY)
         self.amber_site_id = config.get(CONF_AMBER_SITE_ID)
 
-        # Flow Power portal config
+        # Flow Power portal config (may come from initial data or options)
         self.fp_email = config.get(CONF_FLOWPOWER_EMAIL)
         self.fp_password = config.get(CONF_FLOWPOWER_PASSWORD)
+        self.fp_enabled = bool(self.fp_email and self.fp_password)
 
         # TWAP tracking
         self._price_history: list[dict[str, Any]] = []
@@ -150,8 +151,13 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         elif self.price_source == PRICE_SOURCE_FLOWPOWER:
             # Flow Power portal uses AEMO for spot prices + portal for account data
             self._aemo_client = AEMOClient(self._session)
+            if self.fp_enabled:
+                self._fp_client = FlowPowerPortalClient(self._session)
+                await self._fp_authenticate()
+
+        # Also init portal client if credentials exist via options (any price source)
+        if self.fp_enabled and self._fp_client is None and self.price_source != PRICE_SOURCE_FLOWPOWER:
             self._fp_client = FlowPowerPortalClient(self._session)
-            # Authenticate to the portal
             await self._fp_authenticate()
 
         # Load stored price history for TWAP calculation
@@ -199,8 +205,8 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "flowpower_data": None,
             }
 
-            # For Flow Power portal source, also fetch account data
-            if self.price_source == PRICE_SOURCE_FLOWPOWER:
+            # Fetch Flow Power portal account data if credentials are available
+            if self.fp_enabled and self._fp_client:
                 await self._fetch_flowpower_data(data)
 
             # Fetch current prices based on source

@@ -311,8 +311,8 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
     ) -> FlowResult:
         """Manage the options."""
         if user_input is not None:
-            # Check if user wants to re-authenticate Flow Power portal
-            if user_input.pop("reauth_flowpower", False):
+            # Check if user wants to connect/re-authenticate Flow Power portal
+            if user_input.pop("reauth_flowpower", False) or user_input.pop("connect_flowpower", False):
                 return await self.async_step_flowpower_reauth()
             return self.async_create_entry(title="", data=user_input)
 
@@ -350,11 +350,17 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
             ),
         }
 
-        # Add re-authenticate button for Flow Power portal users
-        if current.get(CONF_PRICE_SOURCE) == PRICE_SOURCE_FLOWPOWER:
+        # Flow Power portal: show connect or re-authenticate option
+        if current.get(CONF_FLOWPOWER_EMAIL):
+            # Already connected — offer re-authentication
             schema_fields[
                 vol.Optional("reauth_flowpower", default=False)
-            ] = bool
+            ] = selector.BooleanSelector()
+        else:
+            # Not connected — offer to connect
+            schema_fields[
+                vol.Optional("connect_flowpower", default=False)
+            ] = selector.BooleanSelector()
 
         return self.async_show_form(
             step_id="init",
@@ -364,13 +370,16 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
     async def async_step_flowpower_reauth(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle Flow Power portal re-authentication."""
+        """Handle Flow Power portal authentication/re-authentication."""
         errors: dict[str, str] = {}
         current = {**self.config_entry.data, **self.config_entry.options}
 
         if user_input is not None:
             email = user_input.get(CONF_FLOWPOWER_EMAIL, current.get(CONF_FLOWPOWER_EMAIL, ""))
             password = user_input.get(CONF_FLOWPOWER_PASSWORD, current.get(CONF_FLOWPOWER_PASSWORD, ""))
+            # Store credentials for the coordinator
+            self._fp_email = email
+            self._fp_password = password
 
             try:
                 self._fp_session = aiohttp.ClientSession()
@@ -424,7 +433,14 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
                     if self._fp_session:
                         await self._fp_session.close()
                         self._fp_session = None
-                    return self.async_create_entry(title="", data={})
+                    # Save credentials so coordinator can use them
+                    return self.async_create_entry(
+                        title="",
+                        data={
+                            CONF_FLOWPOWER_EMAIL: getattr(self, "_fp_email", ""),
+                            CONF_FLOWPOWER_PASSWORD: getattr(self, "_fp_password", ""),
+                        },
+                    )
                 else:
                     errors["base"] = "invalid_mfa_code"
             except Exception as e:
