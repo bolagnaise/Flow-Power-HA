@@ -654,43 +654,39 @@ class FlowPowerPortalClient:
             f"&p={FLOWPOWER_B2C_POLICY}"
         )
 
-        # Log cookie details for debugging
-        from yarl import URL as YarlURL
-        sa_url_obj = YarlURL(self_asserted_url)
-        filtered = self._session.cookie_jar.filter_cookies(sa_url_obj)
         _LOGGER.debug(
-            "Flow Power: POST SelfAsserted url=%s, cookies_being_sent=%s",
+            "Flow Power: POST SelfAsserted url=%s",
             self_asserted_url[:200],
-            dict(filtered) if filtered else "NONE",
         )
 
-        # Use aiohttp's native form encoding (pass dict to data=)
-        async with self._session.post(
-            self_asserted_url,
-            data={
-                "request_type": "RESPONSE",
-                "email": email,
-                "password": password,
-            },
-            headers={
-                "X-CSRF-TOKEN": self._csrf_token,
-                "X-Requested-With": "XMLHttpRequest",
-                "Accept": "application/json, text/javascript, */*; q=0.01",
-                "Origin": f"https://{FLOWPOWER_B2C_TENANT}.b2clogin.com",
-                "Referer": self._login_page_url,
-            },
-            timeout=aiohttp.ClientTimeout(total=30),
-            allow_redirects=False,
-        ) as resp:
-            status = resp.status
-            body = await resp.text()
-            resp_headers = dict(resp.headers)
-            _LOGGER.debug(
-                "Flow Power: SelfAsserted status=%s, body=%s, resp_headers=%s",
-                status,
-                body[:500] if body else "(empty)",
-                {k: v[:200] for k, v in resp_headers.items()},
-            )
+        # B2C SelfAsserted expects NO cookies (browser sends none).
+        # Use a fresh session for this request to avoid sending the
+        # cookies that were set during the authorize page load.
+        async with aiohttp.ClientSession() as clean_session:
+            async with clean_session.post(
+                self_asserted_url,
+                data={
+                    "request_type": "RESPONSE",
+                    "email": email,
+                    "password": password,
+                },
+                headers={
+                    "X-CSRF-TOKEN": self._csrf_token,
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Accept": "application/json, text/javascript, */*; q=0.01",
+                    "Origin": f"https://{FLOWPOWER_B2C_TENANT}.b2clogin.com",
+                    "Referer": self._login_page_url,
+                },
+                timeout=aiohttp.ClientTimeout(total=30),
+                allow_redirects=False,
+            ) as resp:
+                status = resp.status
+                body = await resp.text()
+                _LOGGER.debug(
+                    "Flow Power: SelfAsserted status=%s, body=%s",
+                    status,
+                    body[:500] if body else "(empty)",
+                )
 
         if status != 200:
             raise ValueError(f"Login failed with status {status}")
