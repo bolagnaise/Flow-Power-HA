@@ -151,12 +151,13 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         elif self.price_source == PRICE_SOURCE_FLOWPOWER:
             # Flow Power portal uses AEMO for spot prices + portal for account data
             self._aemo_client = AEMOClient(self._session)
-            if self.fp_enabled:
-                self._fp_client = FlowPowerPortalClient()
-                await self._fp_authenticate()
 
-        # Also init portal client if credentials exist via options (any price source)
-        if self.fp_enabled and self._fp_client is None and self.price_source != PRICE_SOURCE_FLOWPOWER:
+        # Pick up authenticated portal client from config/options flow if available
+        pending = self.hass.data.get(DOMAIN, {}).pop("_pending_fp_client", None)
+        if pending and pending.is_authenticated:
+            self._fp_client = pending
+            _LOGGER.info("Flow Power: Using authenticated portal client from config flow")
+        elif self.fp_enabled and self._fp_client is None:
             self._fp_client = FlowPowerPortalClient()
             await self._fp_authenticate()
 

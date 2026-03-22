@@ -164,6 +164,8 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if result.get("status") == "mfa_required":
                     self._data[CONF_FLOWPOWER_EMAIL] = email
                     self._data[CONF_FLOWPOWER_PASSWORD] = password
+                    # Store client so it can be passed to coordinator after MFA
+                    self._fp_client = self._fp_client
                     return await self.async_step_flowpower_mfa()
 
             except ValueError as e:
@@ -200,6 +202,9 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 success = await self._fp_client.verify_mfa(code)
 
                 if success:
+                    # Stash authenticated client for coordinator to pick up
+                    self.hass.data.setdefault(DOMAIN, {})
+                    self.hass.data[DOMAIN]["_pending_fp_client"] = self._fp_client
                     return await self.async_step_region()
                 else:
                     errors["base"] = "invalid_mfa_code"
@@ -414,6 +419,9 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
                 success = await self._fp_client.verify_mfa(code)
 
                 if success:
+                    # Stash authenticated client for coordinator to pick up
+                    self.hass.data.setdefault(DOMAIN, {})
+                    self.hass.data[DOMAIN]["_pending_fp_client"] = self._fp_client
                     # Save credentials so coordinator can use them
                     return self.async_create_entry(
                         title="",
