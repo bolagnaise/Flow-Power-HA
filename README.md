@@ -4,7 +4,8 @@ A Home Assistant integration that provides Flow Power electricity pricing sensor
 
 ## Features
 
-- **Price Sources**: Supports both Amber Electric and AEMO (direct wholesale) as price data sources
+- **Price Sources**: Supports AEMO (direct wholesale), Amber Electric, and Flow Power portal login
+- **Flow Power Portal**: Login directly to your Flow Power account to get actual PEA, LWAP, and TWAP values from Flow Power's billing system
 - **PEA Calculation**: Implements Flow Power's Price Efficiency Adjustment formula
 - **Happy Hour Export**: Automatic export pricing based on Flow Power Happy Hour (5:30pm-7:30pm)
 - **EMHASS Compatible**: Price forecast sensor with attributes for EMHASS integration
@@ -33,6 +34,7 @@ A Home Assistant integration that provides Flow Power electricity pricing sensor
 Choose between:
 - **AEMO (Direct wholesale)**: Fetches prices directly from AEMO NEMWeb
 - **Amber Electric**: Uses your Amber API key for pricing data
+- **Flow Power (Portal login)**: Logs into your Flow Power account at [flowpower.kwatch.com.au](https://flowpower.kwatch.com.au) to fetch actual account data (PEA, LWAP, TWAP, DLF). Uses AEMO for real-time spot prices and forecasts. Requires SMS MFA during setup.
 
 ### Pricing Settings
 
@@ -51,6 +53,7 @@ Choose between:
 | `sensor.flow_power_wholesale_price` | c/kWh | Raw wholesale spot price |
 | `sensor.flow_power_price_forecast` | $/kWh | Price forecast for EMHASS |
 | `sensor.flow_power_twap` | c/kWh | 30-day rolling average wholesale price (TWAP) |
+| `sensor.flow_power_account_pea_actual` | c/kWh | Actual PEA from Flow Power portal (portal login only) |
 
 ## EMHASS Integration
 

@@ -33,6 +33,7 @@ HAPPY_HOUR_END = time(19, 30)    # 7:30 PM
 # Price Sources
 PRICE_SOURCE_AMBER = "amber"
 PRICE_SOURCE_AEMO = "aemo"
+PRICE_SOURCE_FLOWPOWER = "flowpower"
 
 # Configuration Keys
 CONF_PRICE_SOURCE = "price_source"
@@ -42,6 +43,10 @@ CONF_NEM_REGION = "nem_region"
 CONF_BASE_RATE = "base_rate"
 CONF_PEA_ENABLED = "pea_enabled"
 CONF_PEA_CUSTOM_VALUE = "pea_custom_value"
+
+# Flow Power Portal Configuration Keys
+CONF_FLOWPOWER_EMAIL = "flowpower_email"
+CONF_FLOWPOWER_PASSWORD = "flowpower_password"
 
 # Default Configuration Values
 DEFAULT_BASE_RATE = 34.0
@@ -56,6 +61,7 @@ SENSOR_TYPE_EXPORT_PRICE = "export_price"
 SENSOR_TYPE_WHOLESALE_PRICE = "wholesale_price"
 SENSOR_TYPE_PRICE_FORECAST = "price_forecast"
 SENSOR_TYPE_TWAP = "twap"
+SENSOR_TYPE_FLOWPOWER_ACCOUNT = "flowpower_account"
 
 # TWAP (Time Weighted Average Price) Settings
 DEFAULT_TWAP_WINDOW_DAYS = 30  # Rolling window for TWAP calculation
@@ -73,3 +79,14 @@ AEMO_FORECAST_BASE_URL = "https://nemweb.com.au/Reports/Current/Predispatch_Repo
 
 AMBER_API_BASE_URL = "https://api.amber.com.au/v1"
 
+# Flow Power Portal API URLs
+FLOWPOWER_BASE_URL = "https://flowpower.kwatch.com.au"
+FLOWPOWER_B2C_TENANT = "flowpowerb2c"
+FLOWPOWER_B2C_POLICY = "B2C_1A_SignUp_SignIn"
+FLOWPOWER_CLIENT_ID = "d2cbe375-637c-4067-9585-f05eeade9577"
+
+# Flow Power Portal update interval (account data changes slowly)
+UPDATE_INTERVAL_FLOWPOWER = 1800  # 30 minutes
+
+# Flow Power Portal: report GUIDs are fetched dynamically from /menu/allmenu
+# after login (they may be account-specific)

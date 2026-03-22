@@ -19,12 +19,15 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     CONF_NEM_REGION,
+    CONF_PRICE_SOURCE,
     DOMAIN,
     FLOW_POWER_EXPORT_RATES,
     FLOW_POWER_MARKET_AVG,
     HAPPY_HOUR_END,
     HAPPY_HOUR_START,
+    PRICE_SOURCE_FLOWPOWER,
     SENSOR_TYPE_EXPORT_PRICE,
+    SENSOR_TYPE_FLOWPOWER_ACCOUNT,
     SENSOR_TYPE_IMPORT_PRICE,
     SENSOR_TYPE_PRICE_FORECAST,
     SENSOR_TYPE_TWAP,
@@ -60,6 +63,12 @@ async def async_setup_entry(
         FlowPowerForecastSensor(coordinator, config_entry, region),
         FlowPowerTWAPSensor(coordinator, config_entry, region),
     ]
+
+    # Add Flow Power portal account sensor when using portal login
+    if config_entry.data.get(CONF_PRICE_SOURCE) == PRICE_SOURCE_FLOWPOWER:
+        entities.append(
+            FlowPowerAccountSensor(coordinator, config_entry, region)
+        )
 
     async_add_entities(entities)
 
@@ -437,5 +446,73 @@ class FlowPowerTWAPSensor(FlowPowerBaseSensor):
 
             if twap is not None:
                 attrs["twap_dollars"] = round(twap / 100, 4)
+
+        return attrs
+
+
+class FlowPowerAccountSensor(FlowPowerBaseSensor):
+    """Sensor for actual Flow Power account data from the portal.
+
+    Exposes the real PEA, LWAP, TWAP, and other account-specific values
+    directly from Flow Power's billing system, rather than calculated estimates.
+    """
+
+    _attr_name = "Account PEA (Actual)"
+    _attr_native_unit_of_measurement = "c/kWh"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:account-cash"
+
+    def __init__(
+        self,
+        coordinator: FlowPowerCoordinator,
+        config_entry: ConfigEntry,
+        region: str,
+    ) -> None:
+        """Initialize the Flow Power account sensor."""
+        super().__init__(
+            coordinator, config_entry, region, SENSOR_TYPE_FLOWPOWER_ACCOUNT
+        )
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the actual PEA from Flow Power."""
+        if self.coordinator.data:
+            fp_data = self.coordinator.data.get("flowpower_data")
+            if fp_data:
+                return fp_data.get("pea_actual")
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return all Flow Power account metrics as attributes."""
+        attrs: dict[str, Any] = {"region": self._region}
+
+        if not self.coordinator.data:
+            return attrs
+
+        fp_data = self.coordinator.data.get("flowpower_data")
+        if not fp_data:
+            attrs["status"] = "unavailable"
+            return attrs
+
+        attrs.update({
+            "lwap": fp_data.get("lwap"),
+            "lwap_import": fp_data.get("lwap_import"),
+            "lwap_actual": fp_data.get("lwap_actual"),
+            "lwap_import_actual": fp_data.get("lwap_import_actual"),
+            "twap": fp_data.get("twap"),
+            "twap_import": fp_data.get("twap_import"),
+            "avg_rrp": fp_data.get("avg_rrp"),
+            "pea_30_days": fp_data.get("pea_30_days"),
+            "pea_30_import": fp_data.get("pea_30_import"),
+            "pea_actual": fp_data.get("pea_actual"),
+            "pea_target": fp_data.get("pea_target"),
+            "pea_actual_import": fp_data.get("pea_actual_import"),
+            "site_losses_dlf": fp_data.get("site_losses_dlf"),
+            "gst_multiplier": fp_data.get("gst_multiplier"),
+            "avg_usage_kw": fp_data.get("avg_usage_kw"),
+            "avg_import_usage_kw": fp_data.get("avg_import_usage_kw"),
+            "max_usage_kw": fp_data.get("max_usage_kw"),
+        })
 
         return attrs

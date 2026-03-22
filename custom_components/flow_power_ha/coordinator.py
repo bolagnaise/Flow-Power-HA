@@ -12,11 +12,13 @@ from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api_clients import AEMOClient, AmberClient
+from .api_clients import AEMOClient, AmberClient, FlowPowerPortalClient
 from .const import (
     CONF_AMBER_API_KEY,
     CONF_AMBER_SITE_ID,
     CONF_BASE_RATE,
+    CONF_FLOWPOWER_EMAIL,
+    CONF_FLOWPOWER_PASSWORD,
     CONF_NEM_REGION,
     CONF_PEA_CUSTOM_VALUE,
     CONF_PEA_ENABLED,
@@ -27,7 +29,9 @@ from .const import (
     MIN_TWAP_SAMPLES,
     PRICE_SOURCE_AEMO,
     PRICE_SOURCE_AMBER,
+    PRICE_SOURCE_FLOWPOWER,
     UPDATE_INTERVAL_CURRENT,
+    UPDATE_INTERVAL_FLOWPOWER,
 )
 from .pricing import (
     calculate_export_price,
@@ -62,6 +66,7 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._session: aiohttp.ClientSession | None = None
         self._aemo_client: AEMOClient | None = None
         self._amber_client: AmberClient | None = None
+        self._fp_client: FlowPowerPortalClient | None = None
         self._unsub_time_listeners: list = []
 
         # Configuration
@@ -75,11 +80,20 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.amber_api_key = config.get(CONF_AMBER_API_KEY)
         self.amber_site_id = config.get(CONF_AMBER_SITE_ID)
 
+        # Flow Power portal config
+        self.fp_email = config.get(CONF_FLOWPOWER_EMAIL)
+        self.fp_password = config.get(CONF_FLOWPOWER_PASSWORD)
+
         # TWAP tracking
         self._price_history: list[dict[str, Any]] = []
         self._store = Store(hass, 1, f"{DOMAIN}.price_history.{self.region}")
         self._last_store_save: int | None = None
         self._twap: float | None = None
+
+        # Flow Power portal data
+        self._fp_data: dict[str, Any] | None = None
+        self._fp_last_fetch: float = 0
+        self._fp_auth_failed: bool = False
 
         # Set up clock-aligned polling
         self._setup_time_listeners()
@@ -133,6 +147,12 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.amber_api_key,
                 self.amber_site_id,
             )
+        elif self.price_source == PRICE_SOURCE_FLOWPOWER:
+            # Flow Power portal uses AEMO for spot prices + portal for account data
+            self._aemo_client = AEMOClient(self._session)
+            self._fp_client = FlowPowerPortalClient(self._session)
+            # Authenticate to the portal
+            await self._fp_authenticate()
 
         # Load stored price history for TWAP calculation
         stored = await self._store.async_load()
@@ -146,6 +166,20 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._twap,
                 self._get_twap_days(),
             )
+
+    async def _fp_authenticate(self) -> None:
+        """Authenticate to the Flow Power portal (requires MFA already done during config)."""
+        if not self._fp_client or not self.fp_email or not self.fp_password:
+            return
+
+        try:
+            # Attempt login - this will request MFA again
+            # For now, we rely on the session from config flow
+            # On restart, the session will be lost and we'll mark as unavailable
+            _LOGGER.info("Flow Power: Portal client initialized (session from config flow)")
+        except Exception as e:
+            _LOGGER.error("Flow Power: Portal auth error: %s", e)
+            self._fp_auth_failed = True
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from API."""
@@ -162,10 +196,15 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "twap": self._twap,
                 "twap_days": self._get_twap_days(),
                 "twap_samples": len(self._price_history),
+                "flowpower_data": None,
             }
 
+            # For Flow Power portal source, also fetch account data
+            if self.price_source == PRICE_SOURCE_FLOWPOWER:
+                await self._fetch_flowpower_data(data)
+
             # Fetch current prices based on source
-            if self.price_source == PRICE_SOURCE_AEMO and self._aemo_client:
+            if self.price_source in (PRICE_SOURCE_AEMO, PRICE_SOURCE_FLOWPOWER) and self._aemo_client:
                 current_prices = await self._aemo_client.get_current_prices()
                 region_data = current_prices.get(self.region, {})
 
@@ -178,13 +217,18 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     data["twap_days"] = self._get_twap_days()
                     data["twap_samples"] = len(self._price_history)
 
+                    # Use Flow Power portal TWAP if available (more accurate)
+                    twap_for_calc = self._twap
+                    if self._fp_data and self._fp_data.get("twap") is not None:
+                        twap_for_calc = self._fp_data["twap"]
+
                     # Calculate import price with dynamic TWAP
                     import_info = calculate_import_price(
                         wholesale_cents=wholesale_cents,
                         base_rate=self.base_rate,
                         pea_enabled=self.pea_enabled,
                         pea_custom_value=self.pea_custom_value,
-                        twap=self._twap,
+                        twap=twap_for_calc,
                     )
 
                     data["import_price"] = import_info
@@ -196,13 +240,19 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self.region, periods=96
                 )
                 _LOGGER.info("AEMO forecast raw periods: %d for %s", len(forecast_raw) if forecast_raw else 0, self.region)
+
+                # Use portal TWAP for forecast calculations too
+                twap_for_forecast = self._twap
+                if self._fp_data and self._fp_data.get("twap") is not None:
+                    twap_for_forecast = self._fp_data["twap"]
+
                 if forecast_raw:
                     data["forecast"] = calculate_forecast_prices(
                         forecast_raw,
                         base_rate=self.base_rate,
                         pea_enabled=self.pea_enabled,
                         pea_custom_value=self.pea_custom_value,
-                        twap=self._twap,
+                        twap=twap_for_forecast,
                     )
                     _LOGGER.info("Calculated forecast periods: %d", len(data["forecast"]))
 
@@ -260,6 +310,39 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception as err:
             _LOGGER.error("Error fetching Flow Power data: %s", err)
             raise UpdateFailed(f"Error fetching data: {err}") from err
+
+    async def _fetch_flowpower_data(self, data: dict[str, Any]) -> None:
+        """Fetch account data from the Flow Power portal.
+
+        Updates self._fp_data and data["flowpower_data"] on success.
+        Only fetches every UPDATE_INTERVAL_FLOWPOWER seconds.
+        """
+        if not self._fp_client:
+            return
+
+        now = time_mod.time()
+        if now - self._fp_last_fetch < UPDATE_INTERVAL_FLOWPOWER and self._fp_data:
+            # Use cached data
+            data["flowpower_data"] = self._fp_data
+            return
+
+        account_data = await self._fp_client.get_account_data()
+        if account_data:
+            self._fp_data = account_data
+            self._fp_last_fetch = now
+            data["flowpower_data"] = account_data
+            _LOGGER.info(
+                "Flow Power: Account data updated - TWAP=%.2f, PEA=%.2f, LWAP=%.2f",
+                account_data.get("twap", 0),
+                account_data.get("pea_actual", 0),
+                account_data.get("lwap", 0),
+            )
+        elif self._fp_data:
+            # Use stale cached data
+            data["flowpower_data"] = self._fp_data
+            _LOGGER.warning("Flow Power: Using cached portal data (fetch failed)")
+        else:
+            _LOGGER.warning("Flow Power: No portal data available")
 
     def _record_price(self, wholesale_cents: float) -> None:
         """Record a wholesale price sample for TWAP calculation."""

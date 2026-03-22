@@ -1,14 +1,18 @@
-"""API clients for AEMO and Amber price data."""
+"""API clients for AEMO, Amber, and Flow Power portal price data."""
 from __future__ import annotations
 
 import asyncio
 import csv
+import html as html_mod
 import io
+import json
 import logging
 import re
+import time as time_mod
 import zipfile
 from datetime import datetime, timedelta
 from typing import Any
+from urllib.parse import urlencode, urlparse, parse_qs
 from zoneinfo import ZoneInfo
 
 import aiohttp
@@ -18,6 +22,10 @@ from .const import (
     AEMO_DISPATCH_URL,
     AEMO_FORECAST_BASE_URL,
     AMBER_API_BASE_URL,
+    FLOWPOWER_BASE_URL,
+    FLOWPOWER_B2C_POLICY,
+    FLOWPOWER_B2C_TENANT,
+    FLOWPOWER_CLIENT_ID,
     NEM_REGIONS,
 )
 
@@ -497,3 +505,453 @@ class AmberClient:
         """
         # Amber provides spotPerKwh in c/kWh (NEM spot price including GST)
         return price_data.get("spotPerKwh", 0)
+
+
+class FlowPowerPortalClient:
+    """Client for Flow Power kWatch portal.
+
+    Authenticates via Azure AD B2C (email + password + SMS MFA)
+    and fetches actual account data (PEA, LWAP, TWAP, etc.)
+    directly from Flow Power's portal.
+    """
+
+    B2C_BASE = (
+        f"https://{FLOWPOWER_B2C_TENANT}.b2clogin.com"
+        f"/{FLOWPOWER_B2C_TENANT}.onmicrosoft.com"
+        f"/{FLOWPOWER_B2C_POLICY}"
+    )
+
+    def __init__(self, session: aiohttp.ClientSession) -> None:
+        """Initialize the Flow Power portal client."""
+        self._session = session
+        self._authenticated = False
+        self._last_keepalive: float = 0
+        # B2C auth state (populated during authenticate())
+        self._csrf_token: str | None = None
+        self._tx: str | None = None
+        self._api_url: str | None = None
+        # Report GUIDs (fetched dynamically from /menu/allmenu after login)
+        self._home_report_guid: str | None = None
+        self._home_report_properties: str | None = None
+
+    async def authenticate(self, email: str, password: str) -> dict[str, Any]:
+        """Submit credentials to B2C and request SMS MFA.
+
+        Returns:
+            {"status": "mfa_required"} if SMS was sent.
+
+        Raises:
+            Exception on invalid credentials or network error.
+        """
+        # Step 1: Load the B2C authorize page to get CSRF + settings
+        authorize_url = (
+            f"{self.B2C_BASE}/oauth2/v2.0/authorize?"
+            + urlencode({
+                "client_id": FLOWPOWER_CLIENT_ID,
+                "response_type": "code id_token",
+                "scope": "openid profile offline_access",
+                "response_mode": "form_post",
+                "redirect_uri": f"{FLOWPOWER_BASE_URL}/Home/Index",
+            })
+        )
+
+        async with self._session.get(
+            authorize_url,
+            timeout=aiohttp.ClientTimeout(total=30),
+            allow_redirects=True,
+        ) as resp:
+            page_html = await resp.text()
+            page_url = str(resp.url)
+
+        # Extract CSRF token and settings from the B2C page
+        csrf_match = re.search(r'"csrf"\s*:\s*"([^"]+)"', page_html)
+        tx_match = re.search(r'"transId"\s*:\s*"([^"]+)"', page_html)
+        api_match = re.search(r'"api"\s*:\s*"([^"]+)"', page_html)
+
+        if not csrf_match or not tx_match:
+            # Try alternate patterns
+            csrf_match = re.search(r'csrf["\s:]+([A-Za-z0-9+/=_-]+)', page_html)
+            tx_match = re.search(r'StateProperties=([A-Za-z0-9+/=_-]+)', page_url)
+
+        if not csrf_match or not tx_match:
+            raise ValueError(
+                "Could not extract B2C auth tokens from login page"
+            )
+
+        self._csrf_token = csrf_match.group(1)
+        self._tx = tx_match.group(1)
+        if api_match:
+            self._api_url = api_match.group(1)
+
+        # Step 2: Submit email + password via SelfAsserted
+        tx_param = f"StateProperties={self._tx}" if not self._tx.startswith("StateProperties=") else self._tx
+        self_asserted_url = (
+            f"{self.B2C_BASE}/SelfAsserted"
+            f"?tx={tx_param}"
+            f"&p={FLOWPOWER_B2C_POLICY}"
+        )
+
+        async with self._session.post(
+            self_asserted_url,
+            data={
+                "request_type": "RESPONSE",
+                "email": email,
+                "password": password,
+            },
+            headers={
+                "X-CSRF-TOKEN": self._csrf_token,
+                "X-Requested-With": "XMLHttpRequest",
+            },
+            timeout=aiohttp.ClientTimeout(total=30),
+            allow_redirects=False,
+        ) as resp:
+            status = resp.status
+            body = await resp.text()
+
+        if status != 200:
+            raise ValueError(f"Login failed with status {status}")
+
+        if '"status":"400"' in body or "INCORRECT_PASSWORD" in body:
+            raise ValueError("Invalid email or password")
+
+        # Step 3: Confirm the sign-in (triggers MFA)
+        confirmed_url = (
+            f"{self.B2C_BASE}/api/CombinedSigninAndSignup/confirmed"
+            f"?rememberMe=true"
+            f"&csrf_token={self._csrf_token}"
+            f"&tx={tx_param}"
+            f"&p={FLOWPOWER_B2C_POLICY}"
+        )
+
+        async with self._session.get(
+            confirmed_url,
+            timeout=aiohttp.ClientTimeout(total=30),
+            allow_redirects=True,
+        ) as resp:
+            mfa_html = await resp.text()
+            mfa_url = str(resp.url)
+
+        # The MFA page may have updated CSRF/tx
+        new_csrf = re.search(r'"csrf"\s*:\s*"([^"]+)"', mfa_html)
+        new_tx = re.search(r'"transId"\s*:\s*"([^"]+)"', mfa_html)
+        if new_csrf:
+            self._csrf_token = new_csrf.group(1)
+        if new_tx:
+            self._tx = new_tx.group(1)
+
+        # Step 4: Request SMS MFA
+        tx_param = f"StateProperties={self._tx}" if not self._tx.startswith("StateProperties=") else self._tx
+        mfa_request_url = (
+            f"{self.B2C_BASE}/Phonefactor/verify"
+            f"?tx={tx_param}"
+            f"&p={FLOWPOWER_B2C_POLICY}"
+        )
+
+        async with self._session.post(
+            mfa_request_url,
+            data={
+                "request_type": "VERIFICATION_REQUEST",
+                "auth_type": "onewaysms",
+                "id": "1",
+            },
+            headers={
+                "X-CSRF-TOKEN": self._csrf_token,
+                "X-Requested-With": "XMLHttpRequest",
+            },
+            timeout=aiohttp.ClientTimeout(total=30),
+            allow_redirects=False,
+        ) as resp:
+            mfa_resp = await resp.text()
+
+        _LOGGER.info("Flow Power: SMS MFA code requested")
+        return {"status": "mfa_required"}
+
+    async def verify_mfa(self, code: str) -> bool:
+        """Verify the SMS MFA code and establish portal session.
+
+        Args:
+            code: SMS verification code.
+
+        Returns:
+            True if authentication completed successfully.
+        """
+        if not self._csrf_token or not self._tx:
+            raise ValueError("authenticate() must be called first")
+
+        tx_param = f"StateProperties={self._tx}" if not self._tx.startswith("StateProperties=") else self._tx
+
+        # Step 1: Submit verification code
+        verify_url = (
+            f"{self.B2C_BASE}/Phonefactor/verify"
+            f"?tx={tx_param}"
+            f"&p={FLOWPOWER_B2C_POLICY}"
+        )
+
+        async with self._session.post(
+            verify_url,
+            data={
+                "request_type": "VALIDATION_REQUEST",
+                "verification_code": code,
+            },
+            headers={
+                "X-CSRF-TOKEN": self._csrf_token,
+                "X-Requested-With": "XMLHttpRequest",
+            },
+            timeout=aiohttp.ClientTimeout(total=30),
+            allow_redirects=False,
+        ) as resp:
+            body = await resp.text()
+
+        if '"status":"400"' in body or "INCORRECT" in body.upper():
+            return False
+
+        # Step 2: Confirm MFA
+        confirmed_url = (
+            f"{self.B2C_BASE}/api/Phonefactor/confirmed"
+            f"?csrf_token={self._csrf_token}"
+            f"&tx={tx_param}"
+            f"&p={FLOWPOWER_B2C_POLICY}"
+        )
+
+        async with self._session.get(
+            confirmed_url,
+            timeout=aiohttp.ClientTimeout(total=30),
+            allow_redirects=False,
+        ) as resp:
+            # This should redirect back with code + id_token
+            if resp.status in (200, 302):
+                redirect_html = await resp.text()
+            else:
+                return False
+
+        # The redirect may contain a form that auto-POSTs to kWatch
+        # Extract code and id_token from the response
+        code_match = re.search(
+            r'name="code"\s+value="([^"]+)"', redirect_html
+        )
+        id_token_match = re.search(
+            r'name="id_token"\s+value="([^"]+)"', redirect_html
+        )
+        state_match = re.search(
+            r'name="state"\s+value="([^"]+)"', redirect_html
+        )
+
+        if code_match and id_token_match:
+            # Step 3: POST the callback to kWatch to establish session
+            callback_data = {
+                "code": code_match.group(1),
+                "id_token": id_token_match.group(1),
+            }
+            if state_match:
+                callback_data["state"] = state_match.group(1)
+
+            async with self._session.post(
+                f"{FLOWPOWER_BASE_URL}/Home/Index",
+                data=callback_data,
+                timeout=aiohttp.ClientTimeout(total=30),
+                allow_redirects=True,
+            ) as resp:
+                # Should redirect to Home/Index GET - session cookie now set
+                await resp.text()
+                self._authenticated = resp.status == 200
+        else:
+            # Try following redirects directly (the B2C may auto-redirect)
+            async with self._session.get(
+                f"{FLOWPOWER_BASE_URL}/Home/Index",
+                timeout=aiohttp.ClientTimeout(total=30),
+                allow_redirects=True,
+            ) as resp:
+                body = await resp.text()
+                # If we get the app shell, we're authenticated
+                self._authenticated = "allmenu" in body or "kWFormBase" in body
+
+        if self._authenticated:
+            self._last_keepalive = time_mod.time()
+            _LOGGER.info("Flow Power: Portal authentication successful")
+            # Fetch menu to get report GUIDs for this account
+            await self._fetch_menu_guids()
+
+        return self._authenticated
+
+    async def _fetch_menu_guids(self) -> None:
+        """Fetch report GUIDs from the portal menu."""
+        try:
+            async with self._session.get(
+                f"{FLOWPOWER_BASE_URL}/menu/allmenu",
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                if resp.status != 200:
+                    _LOGGER.warning(
+                        "Flow Power: Failed to fetch menu (status %s)",
+                        resp.status,
+                    )
+                    return
+
+                menu = await resp.json()
+
+            # Find the Home report
+            for menu_item in menu.get("MenuItems", []):
+                for sub in menu_item.get("SubMenuItems", []):
+                    if sub.get("IsDefaultReport") or sub.get("Name") == "Home":
+                        self._home_report_guid = sub.get("Link")
+                        self._home_report_properties = sub.get(
+                            "reportPropertiesGuid"
+                        )
+                        _LOGGER.debug(
+                            "Flow Power: Home report GUID=%s, properties=%s",
+                            self._home_report_guid,
+                            self._home_report_properties,
+                        )
+                        return
+
+            # Fallback to default report from menu root
+            default_guid = menu.get("DefaultReportId")
+            default_props = menu.get("DefaultReportPropertiesGuid")
+            if default_guid:
+                self._home_report_guid = default_guid
+                self._home_report_properties = default_props
+
+        except Exception as e:
+            _LOGGER.error("Flow Power: Error fetching menu: %s", e)
+
+    async def get_account_data(self) -> dict[str, Any] | None:
+        """Fetch account data from the Flow Power portal.
+
+        Returns dict with actual PEA, LWAP, TWAP, DLF, etc. from Flow Power,
+        or None if session expired or request failed.
+        """
+        if not self._authenticated:
+            return None
+
+        if not self._home_report_guid:
+            await self._fetch_menu_guids()
+            if not self._home_report_guid:
+                _LOGGER.error("Flow Power: No home report GUID available")
+                return None
+
+        # Keep session alive
+        await self._keep_alive()
+
+        try:
+            # Load the Home report page which contains the userObject
+            request_body = {
+                "reportId": self._home_report_guid,
+                "reportName": "Home",
+                "reportProperties": self._home_report_properties,
+                "reportSettings": None,
+                "applicationSettings": json.dumps({
+                    "applicationState": {},
+                    "formBaseState": None,
+                    "clientInfo": {
+                        "loadTime": datetime.utcnow().strftime(
+                            "%Y-%m-%dT%H:%M:%S.000Z"
+                        ),
+                        "timeZone": 600,
+                        "currentTime": datetime.utcnow().strftime(
+                            "%Y-%m-%dT%H:%M:%S.000Z"
+                        ),
+                    },
+                }),
+            }
+
+            async with self._session.post(
+                f"{FLOWPOWER_BASE_URL}/report/get?",
+                json=request_body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Requested-With": "XMLHttpRequest",
+                },
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as resp:
+                if resp.status != 200:
+                    if resp.status in (302, 401):
+                        self._authenticated = False
+                        _LOGGER.warning(
+                            "Flow Power: Session expired (status %s)",
+                            resp.status,
+                        )
+                    return None
+
+                html_response = await resp.text()
+
+            return self._parse_user_object(html_response)
+
+        except Exception as e:
+            _LOGGER.error("Flow Power: Error fetching account data: %s", e)
+            return None
+
+    def _parse_user_object(self, html: str) -> dict[str, Any] | None:
+        """Extract the userObject from portal HTML response.
+
+        The userObject is embedded as a data-userobject HTML attribute
+        containing JSON with all the account pricing data.
+        """
+        # Look for data-userobject attribute
+        match = re.search(r'data-userobject="([^"]+)"', html)
+        if not match:
+            # Try finding it in applicationSettings JSON
+            match = re.search(r'"userObject"\s*:\s*(\{[^}]+\})', html)
+            if match:
+                try:
+                    return json.loads(match.group(1))
+                except json.JSONDecodeError:
+                    pass
+            _LOGGER.warning("Flow Power: Could not find userObject in response")
+            return None
+
+        # Decode HTML entities and parse JSON
+        raw = match.group(1)
+        decoded = html_mod.unescape(raw)
+
+        try:
+            user_obj = json.loads(decoded)
+        except json.JSONDecodeError as e:
+            _LOGGER.error("Flow Power: Failed to parse userObject JSON: %s", e)
+            return None
+
+        # Extract the pricing fields we care about
+        return {
+            "lwap": user_obj.get("LWAP"),
+            "lwap_import": user_obj.get("LWAPImp"),
+            "lwap_actual": user_obj.get("LWAPActual"),
+            "lwap_import_actual": user_obj.get("LWAPImpActual"),
+            "twap": user_obj.get("TWAP"),
+            "twap_import": user_obj.get("TWAPImp"),
+            "avg_rrp": user_obj.get("AvgRRP"),
+            "avg_usage_kw": user_obj.get("AvgUsage"),
+            "avg_import_usage_kw": user_obj.get("AvgImpUsage"),
+            "max_usage_kw": user_obj.get("MaxUsage"),
+            "total_intervals": user_obj.get("TotalInterval"),
+            "pea_30_days": user_obj.get("PEA30Days"),
+            "pea_30_import": user_obj.get("PEA30ImportDays"),
+            "pea_actual": user_obj.get("PEAActual"),
+            "pea_target": user_obj.get("PEATarget"),
+            "pea_actual_import": user_obj.get("PEAActualImport"),
+            "site_losses_dlf": user_obj.get("SiteLosses"),
+            "gst_multiplier": user_obj.get("GST"),
+        }
+
+    async def _keep_alive(self) -> None:
+        """Send keepalive to maintain session (every 5 minutes)."""
+        now = time_mod.time()
+        if now - self._last_keepalive < 290:
+            return
+
+        try:
+            async with self._session.post(
+                f"{FLOWPOWER_BASE_URL}/Account/KeepAlive",
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                body = await resp.text()
+                if body.strip() == "Success":
+                    self._last_keepalive = now
+                else:
+                    _LOGGER.warning("Flow Power: KeepAlive returned: %s", body)
+                    self._authenticated = False
+        except Exception as e:
+            _LOGGER.error("Flow Power: KeepAlive failed: %s", e)
+
+    @property
+    def is_authenticated(self) -> bool:
+        """Return whether the portal session is active."""
+        return self._authenticated

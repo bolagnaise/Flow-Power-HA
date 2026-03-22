@@ -22,6 +22,21 @@
           "amber_site_id": "Site"
         }
       },
+      "flowpower_login": {
+        "title": "Flow Power Login",
+        "description": "Enter your Flow Power portal credentials ({portal_url}). An SMS verification code will be sent to your registered phone number.",
+        "data": {
+          "flowpower_email": "Email",
+          "flowpower_password": "Password"
+        }
+      },
+      "flowpower_mfa": {
+        "title": "SMS Verification",
+        "description": "Enter the verification code sent to the phone number registered to {email}.",
+        "data": {
+          "mfa_code": "Verification Code"
+        }
+      },
       "region": {
         "title": "NEM Region",
         "description": "Select your National Electricity Market region.",
@@ -48,6 +63,9 @@
       "invalid_api_key": "Invalid Amber API key",
       "no_sites": "No sites found for this API key",
       "cannot_connect": "Failed to connect to API",
+      "invalid_credentials": "Invalid Flow Power email or password",
+      "invalid_mfa_code": "Invalid verification code",
+      "mfa_verification_failed": "SMS verification failed — please try again",
       "unknown": "Unexpected error"
     },
     "abort": {
@@ -62,7 +80,23 @@
         "data": {
           "base_rate": "Base Rate (c/kWh)",
           "pea_enabled": "Enable PEA Calculation",
-          "pea_custom_value": "Custom PEA Value (c/kWh)"
+          "pea_custom_value": "Custom PEA Value (c/kWh)",
+          "reauth_flowpower": "Re-authenticate with Flow Power portal"
+        }
+      },
+      "flowpower_reauth": {
+        "title": "Flow Power Re-authentication",
+        "description": "Re-enter your Flow Power portal credentials ({portal_url}) to refresh your session.",
+        "data": {
+          "flowpower_email": "Email",
+          "flowpower_password": "Password"
+        }
+      },
+      "flowpower_mfa": {
+        "title": "SMS Verification",
+        "description": "Enter the verification code sent to the phone number registered to {email}.",
+        "data": {
+          "mfa_code": "Verification Code"
         }
       }
     }
@@ -83,6 +117,9 @@
       },
       "twap": {
         "name": "TWAP (30-day Average)"
+      },
+      "flowpower_account": {
+        "name": "Account PEA (Actual)"
       }
     }
   }

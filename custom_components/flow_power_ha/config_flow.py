@@ -11,11 +11,13 @@ from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
 
-from .api_clients import AmberClient
+from .api_clients import AmberClient, FlowPowerPortalClient
 from .const import (
     CONF_AMBER_API_KEY,
     CONF_AMBER_SITE_ID,
     CONF_BASE_RATE,
+    CONF_FLOWPOWER_EMAIL,
+    CONF_FLOWPOWER_PASSWORD,
     CONF_NEM_REGION,
     CONF_PEA_CUSTOM_VALUE,
     CONF_PEA_ENABLED,
@@ -25,6 +27,7 @@ from .const import (
     NEM_REGIONS,
     PRICE_SOURCE_AEMO,
     PRICE_SOURCE_AMBER,
+    PRICE_SOURCE_FLOWPOWER,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -39,6 +42,8 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Initialize the config flow."""
         self._data: dict[str, Any] = {}
         self._amber_sites: list[dict[str, Any]] = []
+        self._fp_client: FlowPowerPortalClient | None = None
+        self._fp_session: aiohttp.ClientSession | None = None
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -51,6 +56,8 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             if user_input[CONF_PRICE_SOURCE] == PRICE_SOURCE_AMBER:
                 return await self.async_step_amber()
+            elif user_input[CONF_PRICE_SOURCE] == PRICE_SOURCE_FLOWPOWER:
+                return await self.async_step_flowpower_login()
             else:
                 return await self.async_step_region()
 
@@ -62,6 +69,7 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         options=[
                             selector.SelectOptionDict(value=PRICE_SOURCE_AEMO, label="AEMO (Direct wholesale)"),
                             selector.SelectOptionDict(value=PRICE_SOURCE_AMBER, label="Amber Electric"),
+                            selector.SelectOptionDict(value=PRICE_SOURCE_FLOWPOWER, label="Flow Power (Portal login)"),
                         ],
                         mode=selector.SelectSelectorMode.LIST,
                     )
@@ -140,6 +148,86 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }),
         )
 
+    async def async_step_flowpower_login(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle Flow Power portal email and password entry."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            email = user_input[CONF_FLOWPOWER_EMAIL]
+            password = user_input[CONF_FLOWPOWER_PASSWORD]
+
+            try:
+                self._fp_session = aiohttp.ClientSession()
+                self._fp_client = FlowPowerPortalClient(self._fp_session)
+                result = await self._fp_client.authenticate(email, password)
+
+                if result.get("status") == "mfa_required":
+                    self._data[CONF_FLOWPOWER_EMAIL] = email
+                    self._data[CONF_FLOWPOWER_PASSWORD] = password
+                    return await self.async_step_flowpower_mfa()
+
+            except ValueError as e:
+                _LOGGER.error("Flow Power login error: %s", e)
+                errors["base"] = "invalid_credentials"
+                if self._fp_session:
+                    await self._fp_session.close()
+                    self._fp_session = None
+            except Exception as e:
+                _LOGGER.error("Flow Power connection error: %s", e)
+                errors["base"] = "cannot_connect"
+                if self._fp_session:
+                    await self._fp_session.close()
+                    self._fp_session = None
+
+        return self.async_show_form(
+            step_id="flowpower_login",
+            data_schema=vol.Schema({
+                vol.Required(CONF_FLOWPOWER_EMAIL): str,
+                vol.Required(CONF_FLOWPOWER_PASSWORD): str,
+            }),
+            errors=errors,
+            description_placeholders={
+                "portal_url": "https://flowpower.kwatch.com.au",
+            },
+        )
+
+    async def async_step_flowpower_mfa(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle Flow Power SMS MFA verification."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            code = user_input["mfa_code"]
+
+            try:
+                success = await self._fp_client.verify_mfa(code)
+
+                if success:
+                    # Clean up session (coordinator will create its own)
+                    if self._fp_session:
+                        await self._fp_session.close()
+                        self._fp_session = None
+                    return await self.async_step_region()
+                else:
+                    errors["base"] = "invalid_mfa_code"
+            except Exception as e:
+                _LOGGER.error("Flow Power MFA error: %s", e)
+                errors["base"] = "mfa_verification_failed"
+
+        return self.async_show_form(
+            step_id="flowpower_mfa",
+            data_schema=vol.Schema({
+                vol.Required("mfa_code"): str,
+            }),
+            errors=errors,
+            description_placeholders={
+                "email": self._data.get(CONF_FLOWPOWER_EMAIL, ""),
+            },
+        )
+
     async def async_step_region(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -213,45 +301,145 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
     """Handle options flow for Flow Power Sync."""
 
+    def __init__(self) -> None:
+        """Initialize the options flow."""
+        self._fp_client: FlowPowerPortalClient | None = None
+        self._fp_session: aiohttp.ClientSession | None = None
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Manage the options."""
         if user_input is not None:
+            # Check if user wants to re-authenticate Flow Power portal
+            if user_input.pop("reauth_flowpower", False):
+                return await self.async_step_flowpower_reauth()
             return self.async_create_entry(title="", data=user_input)
 
         current = {**self.config_entry.data, **self.config_entry.options}
 
+        # Build schema - add re-auth option for Flow Power portal users
+        schema_fields: dict[Any, Any] = {
+            vol.Required(
+                CONF_BASE_RATE,
+                default=current.get(CONF_BASE_RATE, DEFAULT_BASE_RATE),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0,
+                    max=100,
+                    step=0.01,
+                    unit_of_measurement="c/kWh",
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            ),
+            vol.Required(
+                CONF_PEA_ENABLED,
+                default=current.get(CONF_PEA_ENABLED, True),
+            ): bool,
+            vol.Optional(
+                CONF_PEA_CUSTOM_VALUE,
+                description={"suggested_value": current.get(CONF_PEA_CUSTOM_VALUE)},
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=-50,
+                    max=50,
+                    step=0.01,
+                    unit_of_measurement="c/kWh",
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            ),
+        }
+
+        # Add re-authenticate button for Flow Power portal users
+        if current.get(CONF_PRICE_SOURCE) == PRICE_SOURCE_FLOWPOWER:
+            schema_fields[
+                vol.Optional("reauth_flowpower", default=False)
+            ] = bool
+
         return self.async_show_form(
             step_id="init",
+            data_schema=vol.Schema(schema_fields),
+        )
+
+    async def async_step_flowpower_reauth(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle Flow Power portal re-authentication."""
+        errors: dict[str, str] = {}
+        current = {**self.config_entry.data, **self.config_entry.options}
+
+        if user_input is not None:
+            email = user_input.get(CONF_FLOWPOWER_EMAIL, current.get(CONF_FLOWPOWER_EMAIL, ""))
+            password = user_input.get(CONF_FLOWPOWER_PASSWORD, current.get(CONF_FLOWPOWER_PASSWORD, ""))
+
+            try:
+                self._fp_session = aiohttp.ClientSession()
+                self._fp_client = FlowPowerPortalClient(self._fp_session)
+                result = await self._fp_client.authenticate(email, password)
+
+                if result.get("status") == "mfa_required":
+                    return await self.async_step_flowpower_mfa()
+
+            except ValueError as e:
+                _LOGGER.error("Flow Power re-auth error: %s", e)
+                errors["base"] = "invalid_credentials"
+                if self._fp_session:
+                    await self._fp_session.close()
+                    self._fp_session = None
+            except Exception as e:
+                _LOGGER.error("Flow Power re-auth connection error: %s", e)
+                errors["base"] = "cannot_connect"
+                if self._fp_session:
+                    await self._fp_session.close()
+                    self._fp_session = None
+
+        return self.async_show_form(
+            step_id="flowpower_reauth",
             data_schema=vol.Schema({
                 vol.Required(
-                    CONF_BASE_RATE,
-                    default=current.get(CONF_BASE_RATE, DEFAULT_BASE_RATE),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=0,
-                        max=100,
-                        step=0.01,
-                        unit_of_measurement="c/kWh",
-                        mode=selector.NumberSelectorMode.BOX,
-                    )
-                ),
-                vol.Required(
-                    CONF_PEA_ENABLED,
-                    default=current.get(CONF_PEA_ENABLED, True),
-                ): bool,
-                vol.Optional(
-                    CONF_PEA_CUSTOM_VALUE,
-                    description={"suggested_value": current.get(CONF_PEA_CUSTOM_VALUE)},
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=-50,
-                        max=50,
-                        step=0.01,
-                        unit_of_measurement="c/kWh",
-                        mode=selector.NumberSelectorMode.BOX,
-                    )
-                ),
+                    CONF_FLOWPOWER_EMAIL,
+                    default=current.get(CONF_FLOWPOWER_EMAIL, ""),
+                ): str,
+                vol.Required(CONF_FLOWPOWER_PASSWORD): str,
             }),
+            errors=errors,
+            description_placeholders={
+                "portal_url": "https://flowpower.kwatch.com.au",
+            },
+        )
+
+    async def async_step_flowpower_mfa(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle Flow Power SMS MFA verification during re-auth."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            code = user_input["mfa_code"]
+
+            try:
+                success = await self._fp_client.verify_mfa(code)
+
+                if success:
+                    if self._fp_session:
+                        await self._fp_session.close()
+                        self._fp_session = None
+                    return self.async_create_entry(title="", data={})
+                else:
+                    errors["base"] = "invalid_mfa_code"
+            except Exception as e:
+                _LOGGER.error("Flow Power MFA re-auth error: %s", e)
+                errors["base"] = "mfa_verification_failed"
+
+        current = {**self.config_entry.data, **self.config_entry.options}
+
+        return self.async_show_form(
+            step_id="flowpower_mfa",
+            data_schema=vol.Schema({
+                vol.Required("mfa_code"): str,
+            }),
+            errors=errors,
+            description_placeholders={
+                "email": current.get(CONF_FLOWPOWER_EMAIL, ""),
+            },
         )
