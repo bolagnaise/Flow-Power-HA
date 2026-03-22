@@ -6,6 +6,7 @@ A Home Assistant integration that provides Flow Power electricity pricing sensor
 
 - **Price Sources**: Supports AEMO (direct wholesale), Amber Electric, and Flow Power portal login
 - **Flow Power Portal**: Login directly to your Flow Power account to get actual PEA, LWAP, and TWAP values from Flow Power's billing system
+- **Connect Anytime**: Already set up with AEMO or Amber? Connect your Flow Power portal from the integration options — no need to reconfigure
 - **PEA Calculation**: Implements Flow Power's Price Efficiency Adjustment formula
 - **Happy Hour Export**: Automatic export pricing based on Flow Power Happy Hour (5:30pm-7:30pm)
 - **EMHASS Compatible**: Price forecast sensor with attributes for EMHASS integration
@@ -36,6 +37,36 @@ Choose between:
 - **Amber Electric**: Uses your Amber API key for pricing data
 - **Flow Power (Portal login)**: Logs into your Flow Power account at [flowpower.kwatch.com.au](https://flowpower.kwatch.com.au) to fetch actual account data (PEA, LWAP, TWAP, DLF). Uses AEMO for real-time spot prices and forecasts. Requires SMS MFA during setup.
 
+### Flow Power Portal
+
+The Flow Power portal provides **actual account-specific** values directly from Flow Power's billing system, rather than calculated estimates. When connected, the integration uses Flow Power's real TWAP for more accurate PEA calculations across all price sources.
+
+#### Setup during initial configuration
+
+1. Select **"Flow Power (Portal login)"** as your price source
+2. Enter your Flow Power portal email and password
+3. Enter the SMS verification code sent to your registered phone number
+4. Select your NEM region and configure pricing
+
+#### Connect to an existing integration
+
+Already set up with AEMO or Amber? You can connect your Flow Power portal account without removing the integration:
+
+1. Go to **Settings > Devices & Services > Flow Power HA > Configure**
+2. Toggle **"Connect Flow Power portal account"**
+3. Submit, then enter your portal email and password
+4. Enter the SMS verification code
+
+#### Re-authentication
+
+Portal sessions expire over time. If your session expires:
+
+1. Go to **Settings > Devices & Services > Flow Power HA > Configure**
+2. Toggle **"Re-authenticate with Flow Power portal"**
+3. Submit, then re-enter your credentials and SMS code
+
+The integration continues to work with calculated TWAP while the portal session is expired — re-authenticating simply restores the actual values.
+
 ### Pricing Settings
 
 | Option | Default | Description |
@@ -53,7 +84,28 @@ Choose between:
 | `sensor.flow_power_wholesale_price` | c/kWh | Raw wholesale spot price |
 | `sensor.flow_power_price_forecast` | $/kWh | Price forecast for EMHASS |
 | `sensor.flow_power_twap` | c/kWh | 30-day rolling average wholesale price (TWAP) |
-| `sensor.flow_power_account_pea_actual` | c/kWh | Actual PEA from Flow Power portal (portal login only) |
+| `sensor.flow_power_account_pea_actual` | c/kWh | Actual PEA from Flow Power portal (portal only) |
+
+### Account PEA Sensor Attributes
+
+When the Flow Power portal is connected, the Account PEA sensor exposes these attributes:
+
+| Attribute | Description |
+|-----------|-------------|
+| `lwap` | Load-Weighted Average Price (c/kWh) |
+| `lwap_import` | LWAP for imports only (c/kWh) |
+| `twap` | Time-Weighted Average Price (c/kWh) |
+| `twap_import` | TWAP for imports only (c/kWh) |
+| `avg_rrp` | Average spot price (c/kWh) |
+| `pea_30_days` | 30-day PEA net (c/kWh) |
+| `pea_30_import` | 30-day PEA import only (c/kWh) |
+| `pea_actual` | Current PEA (c/kWh) |
+| `pea_target` | PEA target (c/kWh) |
+| `site_losses_dlf` | Distribution Loss Factor |
+| `gst_multiplier` | GST multiplier |
+| `avg_usage_kw` | 30-day average demand (kW) |
+| `avg_import_usage_kw` | 30-day average import demand (kW) |
+| `max_usage_kw` | Maximum demand (kW) |
 
 ## EMHASS Integration
 
@@ -88,6 +140,7 @@ Final Rate = Base Rate + PEA
 
 Where:
 - TWAP = 30-day rolling average of wholesale spot prices (dynamic)
+        or actual TWAP from Flow Power portal when connected
 - BPEA = 1.7 c/kWh (Benchmark Price Efficiency Adjustment)
 - Default Base Rate = 34.0 c/kWh
 - When insufficient data (<1 hour), TWAP defaults to 8.0 c/kWh
@@ -107,7 +160,7 @@ Happy Hour: 5:30pm - 7:30pm local time
 
 ## Support
 
-For issues and feature requests, please open an issue on GitHub.
+For issues and feature requests, please open an issue on [GitHub](https://github.com/bolagnaise/Flow-Power-HA/issues).
 
 ## License
 
