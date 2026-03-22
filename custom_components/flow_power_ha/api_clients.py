@@ -546,6 +546,16 @@ class FlowPowerPortalClient:
         self._home_report_guid: str | None = None
         self._home_report_properties: str | None = None
 
+    def _b2c_cookie_header(self) -> str:
+        """Build a Cookie header string from the session cookie jar.
+
+        aiohttp's cookie jar mangles the pipe character in B2C cookie
+        names like 'x-ms-cpim-cache|xxx', so we build the header manually.
+        """
+        return "; ".join(
+            f"{c.key}={c.value}" for c in self._session.cookie_jar
+        )
+
     def _extract_b2c_settings(self, html: str, url: str) -> tuple[str | None, str | None]:
         """Extract CSRF token and transId from a B2C page.
 
@@ -659,9 +669,6 @@ class FlowPowerPortalClient:
             self_asserted_url[:200],
         )
 
-        # B2C SelfAsserted expects NO cookies (browser sends none).
-        # Use a fresh session for this request to avoid sending the
-        # cookies that were set during the authorize page load.
         async with aiohttp.ClientSession() as clean_session:
             async with clean_session.post(
                 self_asserted_url,
@@ -676,6 +683,7 @@ class FlowPowerPortalClient:
                     "Accept": "application/json, text/javascript, */*; q=0.01",
                     "Origin": f"https://{FLOWPOWER_B2C_TENANT}.b2clogin.com",
                     "Referer": self._login_page_url,
+                    "Cookie": self._b2c_cookie_header(),
                 },
                 timeout=aiohttp.ClientTimeout(total=30),
                 allow_redirects=False,
@@ -703,17 +711,19 @@ class FlowPowerPortalClient:
             f"&p={FLOWPOWER_B2C_POLICY}"
         )
 
-        async with self._session.get(
-            confirmed_url,
-            timeout=aiohttp.ClientTimeout(total=30),
-            allow_redirects=True,
-        ) as resp:
-            mfa_html = await resp.text()
-            mfa_url = str(resp.url)
-            _LOGGER.debug(
-                "Flow Power: Confirmed page status=%s, html_len=%d",
-                resp.status, len(mfa_html),
-            )
+        async with aiohttp.ClientSession() as cs:
+            async with cs.get(
+                confirmed_url,
+                headers={"Cookie": self._b2c_cookie_header()},
+                timeout=aiohttp.ClientTimeout(total=30),
+                allow_redirects=True,
+            ) as resp:
+                mfa_html = await resp.text()
+                mfa_url = str(resp.url)
+                _LOGGER.debug(
+                    "Flow Power: Confirmed page status=%s, html_len=%d",
+                    resp.status, len(mfa_html),
+                )
 
         # The MFA page may have updated CSRF/tx
         new_csrf, new_tx = self._extract_b2c_settings(mfa_html, mfa_url)
@@ -730,28 +740,28 @@ class FlowPowerPortalClient:
             f"&p={FLOWPOWER_B2C_POLICY}"
         )
 
-        async with self._session.post(
-            mfa_request_url,
-            data=urlencode({
-                "request_type": "VERIFICATION_REQUEST",
-                "auth_type": "onewaysms",
-                "id": "1",
-            }),
-            headers={
-                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-                "X-CSRF-TOKEN": self._csrf_token,
-                "X-Requested-With": "XMLHttpRequest",
-                "Accept": "application/json, text/javascript, */*; q=0.01",
-            },
-            timeout=aiohttp.ClientTimeout(total=30),
-            allow_redirects=False,
-        ) as resp:
-            mfa_status = resp.status
-            mfa_resp = await resp.text()
-            _LOGGER.debug(
-                "Flow Power: MFA request status=%s, body=%s",
-                mfa_status, mfa_resp[:200] if mfa_resp else "(empty)",
-            )
+        async with aiohttp.ClientSession() as cs:
+            async with cs.post(
+                mfa_request_url,
+                data={
+                    "request_type": "VERIFICATION_REQUEST",
+                    "auth_type": "onewaysms",
+                    "id": "1",
+                },
+                headers={
+                    "X-CSRF-TOKEN": self._csrf_token,
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Cookie": self._b2c_cookie_header(),
+                },
+                timeout=aiohttp.ClientTimeout(total=30),
+                allow_redirects=False,
+            ) as resp:
+                mfa_status = resp.status
+                mfa_resp = await resp.text()
+                _LOGGER.debug(
+                    "Flow Power: MFA request status=%s, body=%s",
+                    mfa_status, mfa_resp[:200] if mfa_resp else "(empty)",
+                )
 
         _LOGGER.info("Flow Power: SMS MFA code requested")
         return {"status": "mfa_required"}
@@ -777,26 +787,26 @@ class FlowPowerPortalClient:
             f"&p={FLOWPOWER_B2C_POLICY}"
         )
 
-        async with self._session.post(
-            verify_url,
-            data=urlencode({
-                "request_type": "VALIDATION_REQUEST",
-                "verification_code": code,
-            }),
-            headers={
-                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-                "X-CSRF-TOKEN": self._csrf_token,
-                "X-Requested-With": "XMLHttpRequest",
-                "Accept": "application/json, text/javascript, */*; q=0.01",
-            },
-            timeout=aiohttp.ClientTimeout(total=30),
-            allow_redirects=False,
-        ) as resp:
-            body = await resp.text()
-            _LOGGER.debug(
-                "Flow Power: MFA verify status=%s, body=%s",
-                resp.status, body[:200] if body else "(empty)",
-            )
+        async with aiohttp.ClientSession() as cs:
+            async with cs.post(
+                verify_url,
+                data={
+                    "request_type": "VALIDATION_REQUEST",
+                    "verification_code": code,
+                },
+                headers={
+                    "X-CSRF-TOKEN": self._csrf_token,
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Cookie": self._b2c_cookie_header(),
+                },
+                timeout=aiohttp.ClientTimeout(total=30),
+                allow_redirects=False,
+            ) as resp:
+                body = await resp.text()
+                _LOGGER.debug(
+                    "Flow Power: MFA verify status=%s, body=%s",
+                    resp.status, body[:200] if body else "(empty)",
+                )
 
         if '"status":"400"' in body or "INCORRECT" in body.upper():
             return False
@@ -809,19 +819,21 @@ class FlowPowerPortalClient:
             f"&p={FLOWPOWER_B2C_POLICY}"
         )
 
-        async with self._session.get(
-            confirmed_url,
-            timeout=aiohttp.ClientTimeout(total=30),
-            allow_redirects=False,
-        ) as resp:
-            _LOGGER.debug(
-                "Flow Power: MFA confirmed status=%s", resp.status,
-            )
-            # This should redirect back with code + id_token
-            if resp.status in (200, 302):
-                redirect_html = await resp.text()
-            else:
-                return False
+        async with aiohttp.ClientSession() as cs:
+            async with cs.get(
+                confirmed_url,
+                headers={"Cookie": self._b2c_cookie_header()},
+                timeout=aiohttp.ClientTimeout(total=30),
+                allow_redirects=False,
+            ) as resp:
+                _LOGGER.debug(
+                    "Flow Power: MFA confirmed status=%s", resp.status,
+                )
+                # This should redirect back with code + id_token
+                if resp.status in (200, 302):
+                    redirect_html = await resp.text()
+                else:
+                    return False
 
         # The redirect may contain a form that auto-POSTs to kWatch
         # Extract code and id_token from the response
