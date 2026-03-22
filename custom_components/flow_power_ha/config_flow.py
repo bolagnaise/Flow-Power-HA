@@ -43,7 +43,6 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._data: dict[str, Any] = {}
         self._amber_sites: list[dict[str, Any]] = []
         self._fp_client: FlowPowerPortalClient | None = None
-        self._fp_session: aiohttp.ClientSession | None = None
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -159,8 +158,7 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             password = user_input[CONF_FLOWPOWER_PASSWORD]
 
             try:
-                self._fp_session = aiohttp.ClientSession()
-                self._fp_client = FlowPowerPortalClient(self._fp_session)
+                self._fp_client = FlowPowerPortalClient()
                 result = await self._fp_client.authenticate(email, password)
 
                 if result.get("status") == "mfa_required":
@@ -171,15 +169,11 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except ValueError as e:
                 _LOGGER.error("Flow Power login error: %s", e)
                 errors["base"] = "invalid_credentials"
-                if self._fp_session:
-                    await self._fp_session.close()
-                    self._fp_session = None
+                self._fp_client = None
             except Exception as e:
                 _LOGGER.error("Flow Power connection error: %s", e)
                 errors["base"] = "cannot_connect"
-                if self._fp_session:
-                    await self._fp_session.close()
-                    self._fp_session = None
+                self._fp_client = None
 
         return self.async_show_form(
             step_id="flowpower_login",
@@ -206,10 +200,6 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 success = await self._fp_client.verify_mfa(code)
 
                 if success:
-                    # Clean up session (coordinator will create its own)
-                    if self._fp_session:
-                        await self._fp_session.close()
-                        self._fp_session = None
                     return await self.async_step_region()
                 else:
                     errors["base"] = "invalid_mfa_code"
@@ -304,7 +294,6 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
     def __init__(self) -> None:
         """Initialize the options flow."""
         self._fp_client: FlowPowerPortalClient | None = None
-        self._fp_session: aiohttp.ClientSession | None = None
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -382,8 +371,7 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
             self._fp_password = password
 
             try:
-                self._fp_session = aiohttp.ClientSession()
-                self._fp_client = FlowPowerPortalClient(self._fp_session)
+                self._fp_client = FlowPowerPortalClient()
                 result = await self._fp_client.authenticate(email, password)
 
                 if result.get("status") == "mfa_required":
@@ -392,15 +380,11 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
             except ValueError as e:
                 _LOGGER.error("Flow Power re-auth error: %s", e)
                 errors["base"] = "invalid_credentials"
-                if self._fp_session:
-                    await self._fp_session.close()
-                    self._fp_session = None
+                self._fp_client = None
             except Exception as e:
                 _LOGGER.error("Flow Power re-auth connection error: %s", e)
                 errors["base"] = "cannot_connect"
-                if self._fp_session:
-                    await self._fp_session.close()
-                    self._fp_session = None
+                self._fp_client = None
 
         return self.async_show_form(
             step_id="flowpower_reauth",
@@ -430,9 +414,6 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
                 success = await self._fp_client.verify_mfa(code)
 
                 if success:
-                    if self._fp_session:
-                        await self._fp_session.close()
-                        self._fp_session = None
                     # Save credentials so coordinator can use them
                     return self.async_create_entry(
                         title="",

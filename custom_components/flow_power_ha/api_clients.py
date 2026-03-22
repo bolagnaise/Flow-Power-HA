@@ -521,9 +521,21 @@ class FlowPowerPortalClient:
         f"/{FLOWPOWER_B2C_POLICY}"
     )
 
-    def __init__(self, session: aiohttp.ClientSession) -> None:
-        """Initialize the Flow Power portal client."""
-        self._session = session
+    def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
+        """Initialize the Flow Power portal client.
+
+        If no session is provided, creates one with unsafe cookie jar
+        (required for cross-domain B2C auth cookies).
+        """
+        if session is None:
+            # Need unsafe=True so cookies from b2clogin.com are sent
+            # back correctly across the B2C redirect flow
+            jar = aiohttp.CookieJar(unsafe=True)
+            self._session = aiohttp.ClientSession(cookie_jar=jar)
+            self._owns_session = True
+        else:
+            self._session = session
+            self._owns_session = False
         self._authenticated = False
         self._last_keepalive: float = 0
         # B2C auth state (populated during authenticate())
@@ -629,9 +641,12 @@ class FlowPowerPortalClient:
 
         self._csrf_token = csrf
         self._tx = tx
+        # Log cookies set by the authorize page
+        b2c_cookies = list(self._session.cookie_jar)
         _LOGGER.debug(
-            "Flow Power: B2C tokens extracted - csrf_len=%d, tx=%s",
-            len(csrf), tx[:80],
+            "Flow Power: B2C tokens extracted - csrf_len=%d, tx=%s, cookies=%d (%s)",
+            len(csrf), tx[:80], len(b2c_cookies),
+            ", ".join(c.key for c in b2c_cookies) if b2c_cookies else "none",
         )
 
         # Step 2: Submit email + password via SelfAsserted
