@@ -599,29 +599,20 @@ class FlowPowerPortalClient:
         Raises:
             Exception on invalid credentials or network error.
         """
-        # Step 1: Load the B2C authorize page to get CSRF + settings
-        authorize_url = (
-            f"{self.B2C_BASE}/oauth2/v2.0/authorize?"
-            + urlencode({
-                "client_id": FLOWPOWER_CLIENT_ID,
-                "response_type": "code id_token",
-                "scope": "openid profile offline_access",
-                "response_mode": "form_post",
-                "redirect_uri": f"{FLOWPOWER_BASE_URL}/Home/Index",
-            })
-        )
-
-        _LOGGER.debug("Flow Power: Loading B2C authorize page")
+        # Step 1: Start from the kWatch portal which redirects to B2C
+        # with a proper state parameter. This is required because B2C
+        # validates that the request originated from the kWatch redirect chain.
+        _LOGGER.debug("Flow Power: Loading portal to trigger B2C redirect")
         async with self._session.get(
-            authorize_url,
+            f"{FLOWPOWER_BASE_URL}/Home/Index",
             timeout=aiohttp.ClientTimeout(total=30),
             allow_redirects=True,
         ) as resp:
             page_html = await resp.text()
             page_url = str(resp.url)
             _LOGGER.debug(
-                "Flow Power: Authorize page status=%s, url=%s, html_len=%d",
-                resp.status, page_url[:100], len(page_html),
+                "Flow Power: B2C login page status=%s, url=%s, html_len=%d",
+                resp.status, page_url[:120], len(page_html),
             )
 
         csrf, tx = self._extract_b2c_settings(page_html, page_url)
@@ -641,6 +632,7 @@ class FlowPowerPortalClient:
 
         self._csrf_token = csrf
         self._tx = tx
+        self._login_page_url = page_url  # Save for Referer header
         # Log cookies set by the authorize page
         b2c_cookies = list(self._session.cookie_jar)
         _LOGGER.debug(
@@ -681,6 +673,7 @@ class FlowPowerPortalClient:
                 "X-Requested-With": "XMLHttpRequest",
                 "Accept": "application/json, text/javascript, */*; q=0.01",
                 "Origin": f"https://{FLOWPOWER_B2C_TENANT}.b2clogin.com",
+                "Referer": self._login_page_url,
             },
             timeout=aiohttp.ClientTimeout(total=30),
             allow_redirects=False,
