@@ -534,6 +534,50 @@ class FlowPowerPortalClient:
         self._home_report_guid: str | None = None
         self._home_report_properties: str | None = None
 
+    def _extract_b2c_settings(self, html: str, url: str) -> tuple[str | None, str | None]:
+        """Extract CSRF token and transId from a B2C page.
+
+        Azure AD B2C embeds a SETTINGS JavaScript object in the login page
+        containing csrf and transId fields needed for API calls.
+        """
+        csrf = None
+        tx = None
+
+        # Pattern 1: SETTINGS JSON object (most common)
+        settings_match = re.search(r'var\s+SETTINGS\s*=\s*(\{.*?\})\s*;', html, re.DOTALL)
+        if settings_match:
+            try:
+                settings = json.loads(settings_match.group(1))
+                csrf = settings.get("csrf")
+                tx = settings.get("transId")
+            except json.JSONDecodeError:
+                pass
+
+        # Pattern 2: Individual JSON fields in page
+        if not csrf:
+            m = re.search(r'"csrf"\s*:\s*"([^"]+)"', html)
+            if m:
+                csrf = m.group(1)
+
+        if not tx:
+            m = re.search(r'"transId"\s*:\s*"([^"]+)"', html)
+            if m:
+                tx = m.group(1)
+
+        # Pattern 3: Extract from URL query params
+        if not tx:
+            m = re.search(r'[?&]tx=(StateProperties=[A-Za-z0-9%+=/_-]+)', url)
+            if m:
+                tx = m.group(1)
+
+        # Pattern 4: Look in meta tags or hidden inputs
+        if not csrf:
+            m = re.search(r'name="csrf"\s+content="([^"]+)"', html)
+            if m:
+                csrf = m.group(1)
+
+        return csrf, tx
+
     async def authenticate(self, email: str, password: str) -> dict[str, Any]:
         """Submit credentials to B2C and request SMS MFA.
 
@@ -555,6 +599,7 @@ class FlowPowerPortalClient:
             })
         )
 
+        _LOGGER.debug("Flow Power: Loading B2C authorize page")
         async with self._session.get(
             authorize_url,
             timeout=aiohttp.ClientTimeout(total=30),
@@ -562,29 +607,33 @@ class FlowPowerPortalClient:
         ) as resp:
             page_html = await resp.text()
             page_url = str(resp.url)
+            _LOGGER.debug(
+                "Flow Power: Authorize page status=%s, url=%s, html_len=%d",
+                resp.status, page_url[:100], len(page_html),
+            )
 
-        # Extract CSRF token and settings from the B2C page
-        csrf_match = re.search(r'"csrf"\s*:\s*"([^"]+)"', page_html)
-        tx_match = re.search(r'"transId"\s*:\s*"([^"]+)"', page_html)
-        api_match = re.search(r'"api"\s*:\s*"([^"]+)"', page_html)
+        csrf, tx = self._extract_b2c_settings(page_html, page_url)
 
-        if not csrf_match or not tx_match:
-            # Try alternate patterns
-            csrf_match = re.search(r'csrf["\s:]+([A-Za-z0-9+/=_-]+)', page_html)
-            tx_match = re.search(r'StateProperties=([A-Za-z0-9+/=_-]+)', page_url)
-
-        if not csrf_match or not tx_match:
+        if not csrf or not tx:
+            _LOGGER.error(
+                "Flow Power: Could not extract B2C tokens. "
+                "csrf=%s, tx=%s, html_len=%d, url=%s",
+                "found" if csrf else "MISSING",
+                "found" if tx else "MISSING",
+                len(page_html),
+                page_url[:200],
+            )
             raise ValueError(
                 "Could not extract B2C auth tokens from login page"
             )
 
-        self._csrf_token = csrf_match.group(1)
-        self._tx = tx_match.group(1)
-        if api_match:
-            self._api_url = api_match.group(1)
+        self._csrf_token = csrf
+        self._tx = tx
+        _LOGGER.debug("Flow Power: B2C tokens extracted successfully")
 
         # Step 2: Submit email + password via SelfAsserted
-        tx_param = f"StateProperties={self._tx}" if not self._tx.startswith("StateProperties=") else self._tx
+        # tx must include the StateProperties= prefix
+        tx_param = tx if tx.startswith("StateProperties=") else f"StateProperties={tx}"
         self_asserted_url = (
             f"{self.B2C_BASE}/SelfAsserted"
             f"?tx={tx_param}"
@@ -593,20 +642,26 @@ class FlowPowerPortalClient:
 
         async with self._session.post(
             self_asserted_url,
-            data={
+            data=urlencode({
                 "request_type": "RESPONSE",
                 "email": email,
                 "password": password,
-            },
+            }),
             headers={
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
                 "X-CSRF-TOKEN": self._csrf_token,
                 "X-Requested-With": "XMLHttpRequest",
+                "Accept": "application/json, text/javascript, */*; q=0.01",
             },
             timeout=aiohttp.ClientTimeout(total=30),
             allow_redirects=False,
         ) as resp:
             status = resp.status
             body = await resp.text()
+            _LOGGER.debug(
+                "Flow Power: SelfAsserted status=%s, body=%s",
+                status, body[:200] if body else "(empty)",
+            )
 
         if status != 200:
             raise ValueError(f"Login failed with status {status}")
@@ -614,7 +669,7 @@ class FlowPowerPortalClient:
         if '"status":"400"' in body or "INCORRECT_PASSWORD" in body:
             raise ValueError("Invalid email or password")
 
-        # Step 3: Confirm the sign-in (triggers MFA)
+        # Step 3: Confirm the sign-in (triggers MFA page)
         confirmed_url = (
             f"{self.B2C_BASE}/api/CombinedSigninAndSignup/confirmed"
             f"?rememberMe=true"
@@ -630,17 +685,20 @@ class FlowPowerPortalClient:
         ) as resp:
             mfa_html = await resp.text()
             mfa_url = str(resp.url)
+            _LOGGER.debug(
+                "Flow Power: Confirmed page status=%s, html_len=%d",
+                resp.status, len(mfa_html),
+            )
 
         # The MFA page may have updated CSRF/tx
-        new_csrf = re.search(r'"csrf"\s*:\s*"([^"]+)"', mfa_html)
-        new_tx = re.search(r'"transId"\s*:\s*"([^"]+)"', mfa_html)
+        new_csrf, new_tx = self._extract_b2c_settings(mfa_html, mfa_url)
         if new_csrf:
-            self._csrf_token = new_csrf.group(1)
+            self._csrf_token = new_csrf
         if new_tx:
-            self._tx = new_tx.group(1)
+            self._tx = new_tx
 
         # Step 4: Request SMS MFA
-        tx_param = f"StateProperties={self._tx}" if not self._tx.startswith("StateProperties=") else self._tx
+        tx_param = self._tx if self._tx.startswith("StateProperties=") else f"StateProperties={self._tx}"
         mfa_request_url = (
             f"{self.B2C_BASE}/Phonefactor/verify"
             f"?tx={tx_param}"
@@ -649,19 +707,26 @@ class FlowPowerPortalClient:
 
         async with self._session.post(
             mfa_request_url,
-            data={
+            data=urlencode({
                 "request_type": "VERIFICATION_REQUEST",
                 "auth_type": "onewaysms",
                 "id": "1",
-            },
+            }),
             headers={
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
                 "X-CSRF-TOKEN": self._csrf_token,
                 "X-Requested-With": "XMLHttpRequest",
+                "Accept": "application/json, text/javascript, */*; q=0.01",
             },
             timeout=aiohttp.ClientTimeout(total=30),
             allow_redirects=False,
         ) as resp:
+            mfa_status = resp.status
             mfa_resp = await resp.text()
+            _LOGGER.debug(
+                "Flow Power: MFA request status=%s, body=%s",
+                mfa_status, mfa_resp[:200] if mfa_resp else "(empty)",
+            )
 
         _LOGGER.info("Flow Power: SMS MFA code requested")
         return {"status": "mfa_required"}
@@ -678,7 +743,7 @@ class FlowPowerPortalClient:
         if not self._csrf_token or not self._tx:
             raise ValueError("authenticate() must be called first")
 
-        tx_param = f"StateProperties={self._tx}" if not self._tx.startswith("StateProperties=") else self._tx
+        tx_param = self._tx if self._tx.startswith("StateProperties=") else f"StateProperties={self._tx}"
 
         # Step 1: Submit verification code
         verify_url = (
@@ -689,18 +754,24 @@ class FlowPowerPortalClient:
 
         async with self._session.post(
             verify_url,
-            data={
+            data=urlencode({
                 "request_type": "VALIDATION_REQUEST",
                 "verification_code": code,
-            },
+            }),
             headers={
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
                 "X-CSRF-TOKEN": self._csrf_token,
                 "X-Requested-With": "XMLHttpRequest",
+                "Accept": "application/json, text/javascript, */*; q=0.01",
             },
             timeout=aiohttp.ClientTimeout(total=30),
             allow_redirects=False,
         ) as resp:
             body = await resp.text()
+            _LOGGER.debug(
+                "Flow Power: MFA verify status=%s, body=%s",
+                resp.status, body[:200] if body else "(empty)",
+            )
 
         if '"status":"400"' in body or "INCORRECT" in body.upper():
             return False
@@ -718,6 +789,9 @@ class FlowPowerPortalClient:
             timeout=aiohttp.ClientTimeout(total=30),
             allow_redirects=False,
         ) as resp:
+            _LOGGER.debug(
+                "Flow Power: MFA confirmed status=%s", resp.status,
+            )
             # This should redirect back with code + id_token
             if resp.status in (200, 302):
                 redirect_html = await resp.text()
