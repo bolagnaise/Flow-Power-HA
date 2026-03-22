@@ -856,6 +856,12 @@ class FlowPowerPortalClient:
 
         # The redirect may contain a form that auto-POSTs to kWatch
         # Extract code and id_token from the response
+        _LOGGER.debug(
+            "Flow Power: MFA confirmed html_len=%d, snippet=%s",
+            len(redirect_html),
+            redirect_html[:500] if redirect_html else "(empty)",
+        )
+
         code_match = re.search(
             r'name="code"\s+value="([^"]+)"', redirect_html
         )
@@ -864,6 +870,13 @@ class FlowPowerPortalClient:
         )
         state_match = re.search(
             r'name="state"\s+value="([^"]+)"', redirect_html
+        )
+
+        _LOGGER.debug(
+            "Flow Power: code=%s, id_token=%s, state=%s",
+            "found" if code_match else "MISSING",
+            "found" if id_token_match else "MISSING",
+            "found" if state_match else "MISSING",
         )
 
         if code_match and id_token_match:
@@ -894,6 +907,11 @@ class FlowPowerPortalClient:
                 body = await resp.text()
                 # If we get the app shell, we're authenticated
                 self._authenticated = "allmenu" in body or "kWFormBase" in body
+
+        _LOGGER.debug(
+            "Flow Power: verify_mfa result - authenticated=%s",
+            self._authenticated,
+        )
 
         if self._authenticated:
             self._last_keepalive = time_mod.time()
