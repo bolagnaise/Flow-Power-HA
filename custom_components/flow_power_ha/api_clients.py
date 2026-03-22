@@ -658,8 +658,14 @@ class FlowPowerPortalClient:
             f"&p={FLOWPOWER_B2C_POLICY}"
         )
 
+        # Log cookie details for debugging
+        from yarl import URL as YarlURL
+        sa_url_obj = YarlURL(self_asserted_url)
+        filtered = self._session.cookie_jar.filter_cookies(sa_url_obj)
         _LOGGER.debug(
-            "Flow Power: POST SelfAsserted url=%s", self_asserted_url[:200],
+            "Flow Power: POST SelfAsserted url=%s, cookies_being_sent=%s",
+            self_asserted_url[:200],
+            dict(filtered) if filtered else "NONE",
         )
 
         # Use aiohttp's native form encoding (pass dict to data=)
@@ -685,8 +691,8 @@ class FlowPowerPortalClient:
             _LOGGER.debug(
                 "Flow Power: SelfAsserted status=%s, body=%s, resp_headers=%s",
                 status,
-                body[:300] if body else "(empty)",
-                {k: v[:100] for k, v in resp_headers.items() if k.lower() in ('location', 'set-cookie', 'content-type', 'x-ms-gateway-requestid')},
+                body[:500] if body else "(empty)",
+                {k: v[:200] for k, v in resp_headers.items()},
             )
 
         if status != 200:
