@@ -542,19 +542,29 @@ class FlowPowerPortalClient:
         self._csrf_token: str | None = None
         self._tx: str | None = None
         self._api_url: str | None = None
+        self._cookies: dict[str, str] = {}  # Manual cookie store for B2C
         # Report GUIDs (fetched dynamically from /menu/allmenu after login)
         self._home_report_guid: str | None = None
         self._home_report_properties: str | None = None
 
     def _b2c_cookie_header(self) -> str:
-        """Build a Cookie header string from the session cookie jar.
+        """Build a Cookie header string from stored cookies.
 
         aiohttp's cookie jar mangles the pipe character in B2C cookie
         names like 'x-ms-cpim-cache|xxx', so we build the header manually.
         """
         return "; ".join(
-            f"{c.key}={c.value}" for c in self._session.cookie_jar
+            f"{k}={v}" for k, v in self._cookies.items()
         )
+
+    def _capture_cookies(self, resp: aiohttp.ClientResponse) -> None:
+        """Capture Set-Cookie headers from a response into our cookie store."""
+        for header_val in resp.headers.getall("Set-Cookie", []):
+            # Parse "name=value; path=...; ..."
+            parts = header_val.split(";")[0]  # Just name=value
+            if "=" in parts:
+                name, _, value = parts.partition("=")
+                self._cookies[name.strip()] = value.strip()
 
     def _extract_b2c_settings(self, html: str, url: str) -> tuple[str | None, str | None]:
         """Extract CSRF token and transId from a B2C page.
@@ -625,6 +635,10 @@ class FlowPowerPortalClient:
                 resp.status, page_url[:120], len(page_html),
             )
 
+        # Capture all cookies from the authorize redirect chain
+        for c in self._session.cookie_jar:
+            self._cookies[c.key] = c.value
+
         csrf, tx = self._extract_b2c_settings(page_html, page_url)
 
         if not csrf or not tx:
@@ -688,6 +702,7 @@ class FlowPowerPortalClient:
                 timeout=aiohttp.ClientTimeout(total=30),
                 allow_redirects=False,
             ) as resp:
+                self._capture_cookies(resp)
                 status = resp.status
                 body = await resp.text()
                 _LOGGER.debug(
@@ -718,11 +733,12 @@ class FlowPowerPortalClient:
                 timeout=aiohttp.ClientTimeout(total=30),
                 allow_redirects=True,
             ) as resp:
+                self._capture_cookies(resp)
                 mfa_html = await resp.text()
                 mfa_url = str(resp.url)
                 _LOGGER.debug(
-                    "Flow Power: Confirmed page status=%s, html_len=%d",
-                    resp.status, len(mfa_html),
+                    "Flow Power: Confirmed page status=%s, html_len=%d, cookies=%d",
+                    resp.status, len(mfa_html), len(self._cookies),
                 )
 
         # The MFA page may have updated CSRF/tx
@@ -756,6 +772,7 @@ class FlowPowerPortalClient:
                 timeout=aiohttp.ClientTimeout(total=30),
                 allow_redirects=False,
             ) as resp:
+                self._capture_cookies(resp)
                 mfa_status = resp.status
                 mfa_resp = await resp.text()
                 _LOGGER.debug(
@@ -802,6 +819,7 @@ class FlowPowerPortalClient:
                 timeout=aiohttp.ClientTimeout(total=30),
                 allow_redirects=False,
             ) as resp:
+                self._capture_cookies(resp)
                 body = await resp.text()
                 _LOGGER.debug(
                     "Flow Power: MFA verify status=%s, body=%s",
@@ -826,6 +844,7 @@ class FlowPowerPortalClient:
                 timeout=aiohttp.ClientTimeout(total=30),
                 allow_redirects=False,
             ) as resp:
+                self._capture_cookies(resp)
                 _LOGGER.debug(
                     "Flow Power: MFA confirmed status=%s", resp.status,
                 )
