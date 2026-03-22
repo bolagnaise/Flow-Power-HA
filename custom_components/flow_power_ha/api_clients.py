@@ -633,6 +633,8 @@ class FlowPowerPortalClient:
         self._csrf_token = csrf
         self._tx = tx
         self._login_page_url = page_url  # Save for Referer header
+        # Use the actual policy path from the redirect (case-sensitive)
+        self._b2c_base = page_url.split("/oauth2/")[0] if "/oauth2/" in page_url else self.B2C_BASE
         # Log cookies set by the authorize page
         b2c_cookies = list(self._session.cookie_jar)
         _LOGGER.debug(
@@ -642,10 +644,12 @@ class FlowPowerPortalClient:
         )
 
         # Step 2: Submit email + password via SelfAsserted
-        # tx must include the StateProperties= prefix
+        # Build the URL using the same base path as the login page
+        # (B2C is case-sensitive on the policy path for cookie matching)
         tx_param = tx if tx.startswith("StateProperties=") else f"StateProperties={tx}"
+
         self_asserted_url = (
-            f"{self.B2C_BASE}/SelfAsserted"
+            f"{self._b2c_base}/SelfAsserted"
             f"?tx={tx_param}"
             f"&p={FLOWPOWER_B2C_POLICY}"
         )
@@ -696,7 +700,7 @@ class FlowPowerPortalClient:
 
         # Step 3: Confirm the sign-in (triggers MFA page)
         confirmed_url = (
-            f"{self.B2C_BASE}/api/CombinedSigninAndSignup/confirmed"
+            f"{self._b2c_base}/api/CombinedSigninAndSignup/confirmed"
             f"?rememberMe=true"
             f"&csrf_token={self._csrf_token}"
             f"&tx={tx_param}"
@@ -725,7 +729,7 @@ class FlowPowerPortalClient:
         # Step 4: Request SMS MFA
         tx_param = self._tx if self._tx.startswith("StateProperties=") else f"StateProperties={self._tx}"
         mfa_request_url = (
-            f"{self.B2C_BASE}/Phonefactor/verify"
+            f"{self._b2c_base}/Phonefactor/verify"
             f"?tx={tx_param}"
             f"&p={FLOWPOWER_B2C_POLICY}"
         )
@@ -772,7 +776,7 @@ class FlowPowerPortalClient:
 
         # Step 1: Submit verification code
         verify_url = (
-            f"{self.B2C_BASE}/Phonefactor/verify"
+            f"{self._b2c_base}/Phonefactor/verify"
             f"?tx={tx_param}"
             f"&p={FLOWPOWER_B2C_POLICY}"
         )
@@ -803,7 +807,7 @@ class FlowPowerPortalClient:
 
         # Step 2: Confirm MFA
         confirmed_url = (
-            f"{self.B2C_BASE}/api/Phonefactor/confirmed"
+            f"{self._b2c_base}/api/Phonefactor/confirmed"
             f"?csrf_token={self._csrf_token}"
             f"&tx={tx_param}"
             f"&p={FLOWPOWER_B2C_POLICY}"
