@@ -863,13 +863,13 @@ class FlowPowerPortalClient:
         )
 
         code_match = re.search(
-            r'name="code"\s+value="([^"]+)"', redirect_html
+            r"name=['\"]code['\"]\s+(?:id=['\"]code['\"]\s+)?value=['\"]([^'\"]+)['\"]", redirect_html
         )
         id_token_match = re.search(
-            r'name="id_token"\s+value="([^"]+)"', redirect_html
+            r"name=['\"]id_token['\"]\s+(?:id=['\"]id_token['\"]\s+)?value=['\"]([^'\"]+)['\"]", redirect_html
         )
         state_match = re.search(
-            r'name="state"\s+value="([^"]+)"', redirect_html
+            r"name=['\"]state['\"]\s+(?:id=['\"]state['\"]\s+)?value=['\"]([^'\"]+)['\"]", redirect_html
         )
 
         _LOGGER.debug(
