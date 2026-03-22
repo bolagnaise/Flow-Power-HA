@@ -629,7 +629,10 @@ class FlowPowerPortalClient:
 
         self._csrf_token = csrf
         self._tx = tx
-        _LOGGER.debug("Flow Power: B2C tokens extracted successfully")
+        _LOGGER.debug(
+            "Flow Power: B2C tokens extracted - csrf_len=%d, tx=%s",
+            len(csrf), tx[:80],
+        )
 
         # Step 2: Submit email + password via SelfAsserted
         # tx must include the StateProperties= prefix
@@ -640,27 +643,35 @@ class FlowPowerPortalClient:
             f"&p={FLOWPOWER_B2C_POLICY}"
         )
 
+        _LOGGER.debug(
+            "Flow Power: POST SelfAsserted url=%s", self_asserted_url[:200],
+        )
+
+        # Use aiohttp's native form encoding (pass dict to data=)
         async with self._session.post(
             self_asserted_url,
-            data=urlencode({
+            data={
                 "request_type": "RESPONSE",
                 "email": email,
                 "password": password,
-            }),
+            },
             headers={
-                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
                 "X-CSRF-TOKEN": self._csrf_token,
                 "X-Requested-With": "XMLHttpRequest",
                 "Accept": "application/json, text/javascript, */*; q=0.01",
+                "Origin": f"https://{FLOWPOWER_B2C_TENANT}.b2clogin.com",
             },
             timeout=aiohttp.ClientTimeout(total=30),
             allow_redirects=False,
         ) as resp:
             status = resp.status
             body = await resp.text()
+            resp_headers = dict(resp.headers)
             _LOGGER.debug(
-                "Flow Power: SelfAsserted status=%s, body=%s",
-                status, body[:200] if body else "(empty)",
+                "Flow Power: SelfAsserted status=%s, body=%s, resp_headers=%s",
+                status,
+                body[:300] if body else "(empty)",
+                {k: v[:100] for k, v in resp_headers.items() if k.lower() in ('location', 'set-cookie', 'content-type', 'x-ms-gateway-requestid')},
             )
 
         if status != 200:
