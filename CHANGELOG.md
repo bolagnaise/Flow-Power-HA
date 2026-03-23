@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.3.0
+
+### Fix: Portal Session Survives HA Restarts
+
+The Flow Power portal login now persists across Home Assistant restarts. Previously, the portal session was lost on every restart, causing the Account PEA (Actual) sensor to go "unknown" until you manually re-authenticated with a new SMS code.
+
+#### What changed
+- **Automatic token refresh** — after MFA verification, the integration now exchanges the B2C authorization code for an OAuth2 refresh token and stores it persistently
+- **Seamless restart recovery** — on HA restart, the stored refresh token is used to re-establish the portal session automatically (no SMS code needed)
+- **Mid-session recovery** — if the portal session expires during normal operation, the integration automatically refreshes it in the background
+- **Token rotation** — if Azure B2C rotates the refresh token, the new token is saved immediately
+
+#### After updating
+You will need to **re-authenticate once** (Options > Re-authenticate Flow Power) to generate the initial refresh token. After that, restarts will be handled automatically. The refresh token is valid for approximately 90 days before requiring a new MFA code.
+
 ## v1.2.0
 
 ### New: Flow Power Portal Login
