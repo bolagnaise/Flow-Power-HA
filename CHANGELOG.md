@@ -1,19 +1,25 @@
 # Changelog
 
-## v1.3.0
+## v1.3.1
 
-### Fix: Portal Session Survives HA Restarts
+### Fix: Portal Session Persistence (Cookie-Based)
 
-The Flow Power portal login now persists across Home Assistant restarts. Previously, the portal session was lost on every restart, causing the Account PEA (Actual) sensor to go "unknown" until you manually re-authenticated with a new SMS code.
+v1.3.0's token exchange approach failed because Flow Power's B2C app is a confidential client. This release switches to **cookie persistence** — the kWatch session cookies are saved to HA storage after each successful login and data fetch, and restored on restart.
 
 #### What changed
-- **Automatic token refresh** — after MFA verification, the integration now exchanges the B2C authorization code for an OAuth2 refresh token and stores it persistently
-- **Seamless restart recovery** — on HA restart, the stored refresh token is used to re-establish the portal session automatically (no SMS code needed)
-- **Mid-session recovery** — if the portal session expires during normal operation, the integration automatically refreshes it in the background
-- **Token rotation** — if Azure B2C rotates the refresh token, the new token is saved immediately
+- **Cookie persistence** — after MFA verification, the kWatch session cookies are saved to persistent storage
+- **Seamless restart recovery** — on HA restart, stored cookies are loaded and validated via KeepAlive
+- **Mid-session recovery** — if the session expires during operation, the integration attempts to restore from stored cookies
+- **Cookies kept fresh** — cookies are re-saved after every successful data fetch (every 30 minutes)
 
 #### After updating
-You will need to **re-authenticate once** (Options > Re-authenticate Flow Power) to generate the initial refresh token. After that, restarts will be handled automatically. The refresh token is valid for approximately 90 days before requiring a new MFA code.
+Re-authenticate once (Options > Re-authenticate Flow Power). After that, restarts should restore your session automatically as long as the server-side session hasn't expired.
+
+## v1.3.0 (superseded by v1.3.1)
+
+### Fix: Portal Session Survives HA Restarts (token exchange — did not work)
+
+Attempted B2C OAuth2 token refresh, but Flow Power's B2C app registration is a confidential client so the token exchange fails with `AADB2C90085`. Superseded by v1.3.1's cookie persistence approach.
 
 ## v1.2.0
 

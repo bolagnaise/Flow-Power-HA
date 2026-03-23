@@ -96,8 +96,8 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._fp_last_fetch: float = 0
         self._fp_auth_failed: bool = False
 
-        # Persistent token storage for Flow Power portal session refresh
-        self._fp_token_store = Store(hass, 1, f"{DOMAIN}.fp_tokens")
+        # Persistent cookie storage for Flow Power portal session
+        self._fp_cookie_store = Store(hass, 1, f"{DOMAIN}.fp_session")
 
         # Set up clock-aligned polling
         self._setup_time_listeners()
@@ -165,10 +165,10 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if pending and pending.is_authenticated:
             self._fp_client = pending
             _LOGGER.info("Flow Power: Using authenticated portal client from config flow")
-            # Persist refresh token for surviving restarts
-            await self._save_fp_tokens()
+            # Persist session cookies for surviving restarts
+            await self._save_fp_cookies()
         elif self.fp_enabled:
-            # Try to restore session from stored refresh token
+            # Try to restore session from stored cookies
             self._fp_client = FlowPowerPortalClient()
             await self._fp_authenticate()
 
@@ -186,52 +186,53 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
 
     async def _fp_authenticate(self) -> None:
-        """Authenticate to the Flow Power portal using stored refresh token."""
+        """Restore Flow Power portal session from stored cookies."""
         if not self._fp_client:
             return
 
-        # Try to load stored refresh token
-        stored = await self._fp_token_store.async_load()
-        if stored and stored.get("refresh_token"):
-            self._fp_client.refresh_token = stored["refresh_token"]
-            self._fp_client.redirect_uri = stored.get("redirect_uri")
-            _LOGGER.info("Flow Power: Loaded stored refresh token, attempting session refresh")
+        stored = await self._fp_cookie_store.async_load()
+        if stored and stored.get("cookies"):
+            _LOGGER.info(
+                "Flow Power: Found %d stored session cookies, attempting restore",
+                len(stored["cookies"]),
+            )
+            self._fp_client.import_session_cookies(stored["cookies"])
 
             try:
-                success = await self._fp_client.refresh_session()
+                success = await self._fp_client.restore_session()
                 if success:
-                    _LOGGER.info("Flow Power: Session refreshed successfully from stored token")
-                    # Save potentially rotated refresh token
-                    await self._save_fp_tokens()
+                    _LOGGER.info("Flow Power: Session restored from stored cookies")
                     return
                 else:
                     _LOGGER.warning(
-                        "Flow Power: Refresh token expired or invalid — "
+                        "Flow Power: Stored session expired — "
                         "re-authenticate via Options > Re-authenticate Flow Power"
                     )
                     self._fp_auth_failed = True
             except Exception as e:
-                _LOGGER.error("Flow Power: Token refresh error: %s", e)
+                _LOGGER.error("Flow Power: Session restore error: %s", e)
                 self._fp_auth_failed = True
         else:
             _LOGGER.info(
-                "Flow Power: No stored refresh token — "
+                "Flow Power: No stored session — "
                 "authenticate via Options > Re-authenticate Flow Power"
             )
 
-    async def _save_fp_tokens(self) -> None:
-        """Persist the Flow Power refresh token to HA storage."""
-        if not self._fp_client or not self._fp_client.refresh_token:
+    async def _save_fp_cookies(self) -> None:
+        """Persist the Flow Power session cookies to HA storage."""
+        if not self._fp_client:
             return
 
         try:
-            await self._fp_token_store.async_save({
-                "refresh_token": self._fp_client.refresh_token,
-                "redirect_uri": self._fp_client.redirect_uri,
-            })
-            _LOGGER.debug("Flow Power: Refresh token saved to persistent storage")
+            cookies = self._fp_client.export_session_cookies()
+            if cookies:
+                await self._fp_cookie_store.async_save({"cookies": cookies})
+                _LOGGER.debug(
+                    "Flow Power: Saved %d session cookies to persistent storage",
+                    len(cookies),
+                )
         except Exception as e:
-            _LOGGER.error("Flow Power: Error saving refresh token: %s", e)
+            _LOGGER.error("Flow Power: Error saving session cookies: %s", e)
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from API."""
@@ -389,24 +390,26 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 account_data.get("pea_actual", 0),
                 account_data.get("lwap", 0),
             )
-        elif not self._fp_client.is_authenticated and self._fp_client.refresh_token:
-            # Session expired mid-operation — try refreshing
-            _LOGGER.info("Flow Power: Session expired, attempting token refresh")
-            if await self._fp_client.refresh_session():
-                await self._save_fp_tokens()
-                # Retry the fetch with refreshed session
+            # Keep stored cookies fresh after each successful fetch
+            await self._save_fp_cookies()
+        elif not self._fp_client.is_authenticated:
+            # Session expired mid-operation — try restoring
+            _LOGGER.info("Flow Power: Session expired, attempting restore")
+            if await self._fp_client.restore_session():
+                await self._save_fp_cookies()
+                # Retry the fetch with restored session
                 account_data = await self._fp_client.get_account_data()
                 if account_data:
                     self._fp_data = account_data
                     self._fp_last_fetch = now
                     data["flowpower_data"] = account_data
-                    _LOGGER.info("Flow Power: Account data fetched after token refresh")
+                    _LOGGER.info("Flow Power: Account data fetched after session restore")
                     return
             if self._fp_data:
                 data["flowpower_data"] = self._fp_data
-                _LOGGER.warning("Flow Power: Using cached portal data (refresh failed)")
+                _LOGGER.warning("Flow Power: Using cached portal data (restore failed)")
             else:
-                _LOGGER.warning("Flow Power: No portal data available (refresh failed)")
+                _LOGGER.warning("Flow Power: No portal data available (session expired)")
         elif self._fp_data:
             # Use stale cached data
             data["flowpower_data"] = self._fp_data

@@ -12,7 +12,7 @@ import time as time_mod
 import zipfile
 from datetime import datetime, timedelta
 from typing import Any
-from urllib.parse import urlencode, urlparse, parse_qs
+
 from zoneinfo import ZoneInfo
 
 import aiohttp
@@ -25,7 +25,6 @@ from .const import (
     FLOWPOWER_BASE_URL,
     FLOWPOWER_B2C_POLICY,
     FLOWPOWER_B2C_TENANT,
-    FLOWPOWER_CLIENT_ID,
     NEM_REGIONS,
 )
 
@@ -521,12 +520,6 @@ class FlowPowerPortalClient:
         f"/{FLOWPOWER_B2C_POLICY}"
     )
 
-    TOKEN_ENDPOINT = (
-        f"https://{FLOWPOWER_B2C_TENANT}.b2clogin.com"
-        f"/{FLOWPOWER_B2C_TENANT}.onmicrosoft.com"
-        f"/{FLOWPOWER_B2C_POLICY}/oauth2/v2.0/token"
-    )
-
     def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
         """Initialize the Flow Power portal client.
 
@@ -549,11 +542,6 @@ class FlowPowerPortalClient:
         self._tx: str | None = None
         self._api_url: str | None = None
         self._cookies: dict[str, str] = {}  # Manual cookie store for B2C
-        # OAuth2 tokens (for session refresh)
-        self._refresh_token: str | None = None
-        self._access_token: str | None = None
-        self._id_token: str | None = None
-        self._redirect_uri: str | None = None
         # Report GUIDs (fetched dynamically from /menu/allmenu after login)
         self._home_report_guid: str | None = None
         self._home_report_properties: str | None = None
@@ -670,10 +658,6 @@ class FlowPowerPortalClient:
         self._login_page_url = page_url  # Save for Referer header
         # Use the actual policy path from the redirect (case-sensitive)
         self._b2c_base = page_url.split("/oauth2/")[0] if "/oauth2/" in page_url else self.B2C_BASE
-        # Extract redirect_uri from the authorize URL for token exchange
-        parsed_url = urlparse(page_url)
-        qs = parse_qs(parsed_url.query)
-        self._redirect_uri = qs.get("redirect_uri", [f"{FLOWPOWER_BASE_URL}/Home/Index"])[0]
         # Log cookies set by the authorize page
         b2c_cookies = list(self._session.cookie_jar)
         _LOGGER.debug(
@@ -895,16 +879,10 @@ class FlowPowerPortalClient:
         )
 
         if code_match and id_token_match:
-            auth_code = code_match.group(1)
-            id_token_val = id_token_match.group(1)
-
-            # Exchange authorization code for OAuth2 tokens (including refresh_token)
-            await self._exchange_code_for_tokens(auth_code)
-
             # Step 3: POST the callback to kWatch to establish session
             callback_data = {
-                "code": auth_code,
-                "id_token": id_token_val,
+                "code": code_match.group(1),
+                "id_token": id_token_match.group(1),
             }
             if state_match:
                 callback_data["state"] = state_match.group(1)
@@ -1120,169 +1098,84 @@ class FlowPowerPortalClient:
         except Exception as e:
             _LOGGER.error("Flow Power: KeepAlive failed: %s", e)
 
-    async def _exchange_code_for_tokens(self, auth_code: str) -> bool:
-        """Exchange B2C authorization code for access + refresh tokens."""
-        redirect_uri = self._redirect_uri or f"{FLOWPOWER_BASE_URL}/Home/Index"
-        try:
-            async with aiohttp.ClientSession() as cs:
-                async with cs.post(
-                    self.TOKEN_ENDPOINT,
-                    data={
-                        "grant_type": "authorization_code",
-                        "client_id": FLOWPOWER_CLIENT_ID,
-                        "code": auth_code,
-                        "redirect_uri": redirect_uri,
-                        "scope": f"{FLOWPOWER_CLIENT_ID} offline_access openid",
-                    },
-                    timeout=aiohttp.ClientTimeout(total=30),
-                ) as resp:
-                    if resp.status != 200:
-                        body = await resp.text()
-                        _LOGGER.warning(
-                            "Flow Power: Token exchange failed (status %s): %s",
-                            resp.status, body[:300],
-                        )
-                        return False
+    def export_session_cookies(self) -> list[dict[str, str]]:
+        """Export session cookies for persistent storage.
 
-                    tokens = await resp.json()
-
-            self._access_token = tokens.get("access_token")
-            self._id_token = tokens.get("id_token")
-            self._refresh_token = tokens.get("refresh_token")
-
-            _LOGGER.info(
-                "Flow Power: Token exchange successful - "
-                "access_token=%s, refresh_token=%s, expires_in=%s",
-                "obtained" if self._access_token else "MISSING",
-                "obtained" if self._refresh_token else "MISSING",
-                tokens.get("expires_in"),
-            )
-            return bool(self._refresh_token)
-
-        except Exception as e:
-            _LOGGER.error("Flow Power: Token exchange error: %s", e)
-            return False
-
-    async def refresh_session(self) -> bool:
-        """Use stored refresh_token to get new tokens and re-establish kWatch session.
-
-        Returns True if session was successfully refreshed.
+        Returns a list of cookie dicts that can be saved and restored later.
         """
-        if not self._refresh_token:
-            _LOGGER.debug("Flow Power: No refresh token available")
-            return False
+        cookies = []
+        for cookie in self._session.cookie_jar:
+            cookies.append({
+                "name": cookie.key,
+                "value": cookie.value,
+                "domain": cookie["domain"] or "",
+                "path": cookie["path"] or "/",
+            })
+        _LOGGER.debug("Flow Power: Exported %d session cookies", len(cookies))
+        return cookies
 
-        redirect_uri = self._redirect_uri or f"{FLOWPOWER_BASE_URL}/Home/Index"
-        try:
-            async with aiohttp.ClientSession() as cs:
-                async with cs.post(
-                    self.TOKEN_ENDPOINT,
-                    data={
-                        "grant_type": "refresh_token",
-                        "client_id": FLOWPOWER_CLIENT_ID,
-                        "refresh_token": self._refresh_token,
-                        "scope": f"{FLOWPOWER_CLIENT_ID} offline_access openid",
-                    },
-                    timeout=aiohttp.ClientTimeout(total=30),
-                ) as resp:
-                    if resp.status != 200:
-                        body = await resp.text()
-                        _LOGGER.warning(
-                            "Flow Power: Token refresh failed (status %s): %s",
-                            resp.status, body[:300],
-                        )
-                        self._refresh_token = None
-                        return False
+    def import_session_cookies(self, cookies: list[dict[str, str]]) -> None:
+        """Import previously saved session cookies into the cookie jar."""
+        from http.cookies import SimpleCookie
+        from yarl import URL
 
-                    tokens = await resp.json()
-
-            self._access_token = tokens.get("access_token")
-            self._id_token = tokens.get("id_token")
-            # B2C may rotate the refresh token
-            new_refresh = tokens.get("refresh_token")
-            if new_refresh:
-                self._refresh_token = new_refresh
-
-            _LOGGER.info(
-                "Flow Power: Token refresh successful - expires_in=%s",
-                tokens.get("expires_in"),
+        for c in cookies:
+            morsel = SimpleCookie()
+            morsel[c["name"]] = c["value"]
+            morsel[c["name"]]["domain"] = c.get("domain", "")
+            morsel[c["name"]]["path"] = c.get("path", "/")
+            # Build a URL for the cookie jar to associate the cookie with
+            domain = c.get("domain", "").lstrip(".")
+            if not domain:
+                domain = "flowpower.kwatch.com.au"
+            self._session.cookie_jar.update_cookies(
+                morsel, URL(f"https://{domain}/")
             )
+        _LOGGER.debug("Flow Power: Imported %d session cookies", len(cookies))
 
-            # Re-establish kWatch session using the new id_token
-            if self._id_token:
-                return await self._establish_kwatch_session()
+    async def restore_session(self) -> bool:
+        """Try to restore a session from imported cookies.
 
-            return False
+        Tests the session by calling KeepAlive. If that fails,
+        tries loading the home page to check for an active session.
 
-        except Exception as e:
-            _LOGGER.error("Flow Power: Token refresh error: %s", e)
-            return False
-
-    async def _establish_kwatch_session(self) -> bool:
-        """Use current id_token to establish a kWatch portal session."""
-        if not self._id_token:
-            return False
-
+        Returns True if the session is still valid.
+        """
         try:
-            callback_data: dict[str, str] = {"id_token": self._id_token}
-            if self._access_token:
-                callback_data["code"] = self._access_token
-
+            # Try KeepAlive first (lightweight)
             async with self._session.post(
-                f"{FLOWPOWER_BASE_URL}/Home/Index",
-                data=callback_data,
-                timeout=aiohttp.ClientTimeout(total=30),
-                allow_redirects=True,
+                f"{FLOWPOWER_BASE_URL}/Account/KeepAlive",
+                timeout=aiohttp.ClientTimeout(total=15),
             ) as resp:
                 body = await resp.text()
-                is_app = "allmenu" in body or "kWFormBase" in body
-                self._authenticated = resp.status == 200 and is_app
+                if body.strip() == "Success":
+                    self._authenticated = True
+                    self._last_keepalive = time_mod.time()
+                    _LOGGER.info("Flow Power: Session restored via KeepAlive")
+                    await self._fetch_menu_guids()
+                    return True
 
-            if not self._authenticated:
-                # Sometimes the POST redirect doesn't land on the app shell,
-                # try a follow-up GET
-                async with self._session.get(
-                    f"{FLOWPOWER_BASE_URL}/Home/Index",
-                    timeout=aiohttp.ClientTimeout(total=15),
-                    allow_redirects=True,
-                ) as resp:
-                    body = await resp.text()
-                    self._authenticated = (
-                        "allmenu" in body or "kWFormBase" in body
-                    )
+            # KeepAlive failed — try loading the portal home page
+            _LOGGER.debug("Flow Power: KeepAlive returned '%s', trying home page", body.strip()[:50])
+            async with self._session.get(
+                f"{FLOWPOWER_BASE_URL}/Home/Index",
+                timeout=aiohttp.ClientTimeout(total=15),
+                allow_redirects=True,
+            ) as resp:
+                page = await resp.text()
+                if "allmenu" in page or "kWFormBase" in page:
+                    self._authenticated = True
+                    self._last_keepalive = time_mod.time()
+                    _LOGGER.info("Flow Power: Session restored via home page check")
+                    await self._fetch_menu_guids()
+                    return True
 
-            if self._authenticated:
-                self._last_keepalive = time_mod.time()
-                _LOGGER.info("Flow Power: kWatch session re-established via token refresh")
-                await self._fetch_menu_guids()
-            else:
-                _LOGGER.warning("Flow Power: Failed to establish kWatch session from refreshed tokens")
-
-            return self._authenticated
-
-        except Exception as e:
-            _LOGGER.error("Flow Power: Error establishing kWatch session: %s", e)
+            _LOGGER.warning("Flow Power: Stored session cookies expired")
             return False
 
-    @property
-    def refresh_token(self) -> str | None:
-        """Return the current refresh token for persistent storage."""
-        return self._refresh_token
-
-    @refresh_token.setter
-    def refresh_token(self, value: str | None) -> None:
-        """Set the refresh token (loaded from persistent storage)."""
-        self._refresh_token = value
-
-    @property
-    def redirect_uri(self) -> str | None:
-        """Return the redirect URI used for token exchange."""
-        return self._redirect_uri
-
-    @redirect_uri.setter
-    def redirect_uri(self, value: str | None) -> None:
-        """Set the redirect URI (loaded from persistent storage)."""
-        self._redirect_uri = value
+        except Exception as e:
+            _LOGGER.error("Flow Power: Error restoring session: %s", e)
+            return False
 
     @property
     def is_authenticated(self) -> bool:
