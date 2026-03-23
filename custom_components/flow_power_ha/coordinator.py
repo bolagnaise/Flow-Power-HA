@@ -96,6 +96,9 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._fp_last_fetch: float = 0
         self._fp_auth_failed: bool = False
 
+        # Persistent token storage for Flow Power portal session refresh
+        self._fp_token_store = Store(hass, 1, f"{DOMAIN}.fp_tokens")
+
         # Set up clock-aligned polling
         self._setup_time_listeners()
 
@@ -162,7 +165,10 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if pending and pending.is_authenticated:
             self._fp_client = pending
             _LOGGER.info("Flow Power: Using authenticated portal client from config flow")
-        elif self.fp_enabled and self._fp_client is None:
+            # Persist refresh token for surviving restarts
+            await self._save_fp_tokens()
+        elif self.fp_enabled:
+            # Try to restore session from stored refresh token
             self._fp_client = FlowPowerPortalClient()
             await self._fp_authenticate()
 
@@ -180,18 +186,52 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
 
     async def _fp_authenticate(self) -> None:
-        """Authenticate to the Flow Power portal (requires MFA already done during config)."""
-        if not self._fp_client or not self.fp_email or not self.fp_password:
+        """Authenticate to the Flow Power portal using stored refresh token."""
+        if not self._fp_client:
+            return
+
+        # Try to load stored refresh token
+        stored = await self._fp_token_store.async_load()
+        if stored and stored.get("refresh_token"):
+            self._fp_client.refresh_token = stored["refresh_token"]
+            self._fp_client.redirect_uri = stored.get("redirect_uri")
+            _LOGGER.info("Flow Power: Loaded stored refresh token, attempting session refresh")
+
+            try:
+                success = await self._fp_client.refresh_session()
+                if success:
+                    _LOGGER.info("Flow Power: Session refreshed successfully from stored token")
+                    # Save potentially rotated refresh token
+                    await self._save_fp_tokens()
+                    return
+                else:
+                    _LOGGER.warning(
+                        "Flow Power: Refresh token expired or invalid — "
+                        "re-authenticate via Options > Re-authenticate Flow Power"
+                    )
+                    self._fp_auth_failed = True
+            except Exception as e:
+                _LOGGER.error("Flow Power: Token refresh error: %s", e)
+                self._fp_auth_failed = True
+        else:
+            _LOGGER.info(
+                "Flow Power: No stored refresh token — "
+                "authenticate via Options > Re-authenticate Flow Power"
+            )
+
+    async def _save_fp_tokens(self) -> None:
+        """Persist the Flow Power refresh token to HA storage."""
+        if not self._fp_client or not self._fp_client.refresh_token:
             return
 
         try:
-            # Attempt login - this will request MFA again
-            # For now, we rely on the session from config flow
-            # On restart, the session will be lost and we'll mark as unavailable
-            _LOGGER.info("Flow Power: Portal client initialized (session from config flow)")
+            await self._fp_token_store.async_save({
+                "refresh_token": self._fp_client.refresh_token,
+                "redirect_uri": self._fp_client.redirect_uri,
+            })
+            _LOGGER.debug("Flow Power: Refresh token saved to persistent storage")
         except Exception as e:
-            _LOGGER.error("Flow Power: Portal auth error: %s", e)
-            self._fp_auth_failed = True
+            _LOGGER.error("Flow Power: Error saving refresh token: %s", e)
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from API."""
@@ -349,6 +389,24 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 account_data.get("pea_actual", 0),
                 account_data.get("lwap", 0),
             )
+        elif not self._fp_client.is_authenticated and self._fp_client.refresh_token:
+            # Session expired mid-operation — try refreshing
+            _LOGGER.info("Flow Power: Session expired, attempting token refresh")
+            if await self._fp_client.refresh_session():
+                await self._save_fp_tokens()
+                # Retry the fetch with refreshed session
+                account_data = await self._fp_client.get_account_data()
+                if account_data:
+                    self._fp_data = account_data
+                    self._fp_last_fetch = now
+                    data["flowpower_data"] = account_data
+                    _LOGGER.info("Flow Power: Account data fetched after token refresh")
+                    return
+            if self._fp_data:
+                data["flowpower_data"] = self._fp_data
+                _LOGGER.warning("Flow Power: Using cached portal data (refresh failed)")
+            else:
+                _LOGGER.warning("Flow Power: No portal data available (refresh failed)")
         elif self._fp_data:
             # Use stale cached data
             data["flowpower_data"] = self._fp_data
