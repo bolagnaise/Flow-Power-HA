@@ -366,13 +366,16 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.error("Error fetching Flow Power data: %s", err)
             raise UpdateFailed(f"Error fetching data: {err}") from err
 
-    def _check_pending_fp_client(self) -> bool:
+    async def _check_pending_fp_client(self) -> bool:
         """Check for a freshly authenticated client from reauth flow.
 
         Returns True if a new client was picked up.
         """
         pending = self.hass.data.get(DOMAIN, {}).pop("_pending_fp_client", None)
         if pending and pending.is_authenticated:
+            # Close the old client's session to avoid "Unclosed client session"
+            if self._fp_client:
+                await self._fp_client.close()
             self._fp_client = pending
             self._fp_auth_failed = False
             self._fp_restore_failures = 0
@@ -388,7 +391,7 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Only fetches every UPDATE_INTERVAL_FLOWPOWER seconds.
         """
         # Always check for a freshly authenticated client from reauth
-        if self._check_pending_fp_client():
+        if await self._check_pending_fp_client():
             await self._save_fp_cookies()
 
         if not self._fp_client:

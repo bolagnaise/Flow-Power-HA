@@ -546,6 +546,11 @@ class FlowPowerPortalClient:
         self._home_report_guid: str | None = None
         self._home_report_properties: str | None = None
 
+    async def close(self) -> None:
+        """Close the underlying HTTP session if we own it."""
+        if self._owns_session and self._session and not self._session.closed:
+            await self._session.close()
+
     def _b2c_cookie_header(self) -> str:
         """Build a Cookie header string from stored cookies.
 
