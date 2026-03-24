@@ -422,14 +422,13 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
                     # Stash authenticated client for coordinator to pick up
                     self.hass.data.setdefault(DOMAIN, {})
                     self.hass.data[DOMAIN]["_pending_fp_client"] = self._fp_client
-                    # Save credentials so coordinator can use them
-                    return self.async_create_entry(
-                        title="",
-                        data={
-                            CONF_FLOWPOWER_EMAIL: getattr(self, "_fp_email", ""),
-                            CONF_FLOWPOWER_PASSWORD: getattr(self, "_fp_password", ""),
-                        },
-                    )
+                    # Merge credentials into existing options (don't wipe them)
+                    merged = {
+                        **self.config_entry.options,
+                        CONF_FLOWPOWER_EMAIL: getattr(self, "_fp_email", ""),
+                        CONF_FLOWPOWER_PASSWORD: getattr(self, "_fp_password", ""),
+                    }
+                    return self.async_create_entry(title="", data=merged)
                 else:
                     errors["base"] = "invalid_mfa_code"
             except Exception as e:

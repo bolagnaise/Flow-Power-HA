@@ -95,6 +95,8 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._fp_data: dict[str, Any] | None = None
         self._fp_last_fetch: float = 0
         self._fp_auth_failed: bool = False
+        self._fp_restore_failures: int = 0
+        self._fp_restore_backoff_until: float = 0
 
         # Persistent cookie storage for Flow Power portal session
         self._fp_cookie_store = Store(hass, 1, f"{DOMAIN}.fp_session")
@@ -364,12 +366,31 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.error("Error fetching Flow Power data: %s", err)
             raise UpdateFailed(f"Error fetching data: {err}") from err
 
+    def _check_pending_fp_client(self) -> bool:
+        """Check for a freshly authenticated client from reauth flow.
+
+        Returns True if a new client was picked up.
+        """
+        pending = self.hass.data.get(DOMAIN, {}).pop("_pending_fp_client", None)
+        if pending and pending.is_authenticated:
+            self._fp_client = pending
+            self._fp_auth_failed = False
+            self._fp_restore_failures = 0
+            self._fp_restore_backoff_until = 0
+            _LOGGER.info("Flow Power: Picked up authenticated client from reauth flow")
+            return True
+        return False
+
     async def _fetch_flowpower_data(self, data: dict[str, Any]) -> None:
         """Fetch account data from the Flow Power portal.
 
         Updates self._fp_data and data["flowpower_data"] on success.
         Only fetches every UPDATE_INTERVAL_FLOWPOWER seconds.
         """
+        # Always check for a freshly authenticated client from reauth
+        if self._check_pending_fp_client():
+            await self._save_fp_cookies()
+
         if not self._fp_client:
             return
 
@@ -384,6 +405,8 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._fp_data = account_data
             self._fp_last_fetch = now
             data["flowpower_data"] = account_data
+            self._fp_restore_failures = 0
+            self._fp_restore_backoff_until = 0
             _LOGGER.info(
                 "Flow Power: Account data updated - TWAP=%.2f, PEA=%.2f, LWAP=%.2f",
                 account_data.get("twap", 0),
@@ -393,9 +416,17 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Keep stored cookies fresh after each successful fetch
             await self._save_fp_cookies()
         elif not self._fp_client.is_authenticated:
-            # Session expired mid-operation — try restoring
+            # Session expired — try restoring (with backoff)
+            if now < self._fp_restore_backoff_until:
+                # In backoff period — use cached data or stay silent
+                if self._fp_data:
+                    data["flowpower_data"] = self._fp_data
+                return
+
             _LOGGER.info("Flow Power: Session expired, attempting restore")
             if await self._fp_client.restore_session():
+                self._fp_restore_failures = 0
+                self._fp_restore_backoff_until = 0
                 await self._save_fp_cookies()
                 # Retry the fetch with restored session
                 account_data = await self._fp_client.get_account_data()
@@ -405,11 +436,23 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     data["flowpower_data"] = account_data
                     _LOGGER.info("Flow Power: Account data fetched after session restore")
                     return
+            # Restore failed — apply exponential backoff (30s, 60s, 120s, ... max 10min)
+            self._fp_restore_failures += 1
+            backoff = min(30 * (2 ** (self._fp_restore_failures - 1)), 600)
+            self._fp_restore_backoff_until = now + backoff
             if self._fp_data:
                 data["flowpower_data"] = self._fp_data
-                _LOGGER.warning("Flow Power: Using cached portal data (restore failed)")
+                _LOGGER.warning(
+                    "Flow Power: Using cached portal data (restore failed, "
+                    "retry in %ds — re-authenticate via Options if persistent)",
+                    backoff,
+                )
             else:
-                _LOGGER.warning("Flow Power: No portal data available (session expired)")
+                _LOGGER.warning(
+                    "Flow Power: No portal data available (session expired, "
+                    "retry in %ds — re-authenticate via Options)",
+                    backoff,
+                )
         elif self._fp_data:
             # Use stale cached data
             data["flowpower_data"] = self._fp_data

@@ -1174,7 +1174,7 @@ class FlowPowerPortalClient:
             return False
 
         except Exception as e:
-            _LOGGER.error("Flow Power: Error restoring session: %s", e)
+            _LOGGER.error("Flow Power: Error restoring session: %r", e)
             return False
 
     @property
