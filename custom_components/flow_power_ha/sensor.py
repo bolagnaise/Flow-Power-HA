@@ -497,6 +497,7 @@ class FlowPowerAccountSensor(FlowPowerBaseSensor):
             attrs["status"] = "unavailable"
             return attrs
 
+        attrs["status"] = "cached" if fp_data.get("cached") else "live"
         attrs.update({
             "lwap": fp_data.get("lwap"),
             "lwap_import": fp_data.get("lwap_import"),

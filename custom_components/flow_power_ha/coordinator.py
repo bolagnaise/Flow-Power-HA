@@ -101,6 +101,9 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Persistent cookie storage for Flow Power portal session
         self._fp_cookie_store = Store(hass, 1, f"{DOMAIN}.fp_session")
 
+        # Persistent portal data cache (survives restarts)
+        self._fp_data_store = Store(hass, 1, f"{DOMAIN}.fp_portal_data")
+
         # Set up clock-aligned polling
         self._setup_time_listeners()
 
@@ -174,6 +177,19 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._fp_client = FlowPowerPortalClient()
             await self._fp_authenticate()
 
+        # Restore cached portal data so sensors don't go unknown on restart
+        if self.fp_enabled and not self._fp_data:
+            cached = await self._fp_data_store.async_load()
+            if cached and isinstance(cached.get("data"), dict):
+                self._fp_data = cached["data"]
+                self._fp_data["cached"] = True
+                _LOGGER.info(
+                    "Flow Power: Restored cached portal data "
+                    "(PEA=%.2f, TWAP=%.2f) — will refresh when session restored",
+                    self._fp_data.get("pea_actual", 0),
+                    self._fp_data.get("twap", 0),
+                )
+
         # Load stored price history for TWAP calculation
         stored = await self._store.async_load()
         if stored and isinstance(stored.get("price_history"), list):
@@ -236,6 +252,17 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception as e:
             _LOGGER.error("Flow Power: Error saving session cookies: %s", e)
 
+    async def _save_fp_data_cache(self) -> None:
+        """Persist the last known portal data so sensors survive restarts."""
+        if not self._fp_data:
+            return
+        try:
+            # Strip the cached flag before saving
+            save_data = {k: v for k, v in self._fp_data.items() if k != "cached"}
+            await self._fp_data_store.async_save({"data": save_data})
+        except Exception as e:
+            _LOGGER.error("Flow Power: Error saving portal data cache: %s", e)
+
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from API."""
         if self._session is None:
@@ -254,8 +281,8 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "flowpower_data": None,
             }
 
-            # Fetch Flow Power portal account data if credentials are available
-            if self.fp_enabled and self._fp_client:
+            # Fetch Flow Power portal account data (or serve cached data)
+            if self.fp_enabled:
                 await self._fetch_flowpower_data(data)
 
             # Fetch current prices based on source
@@ -395,6 +422,9 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self._save_fp_cookies()
 
         if not self._fp_client:
+            # Still serve cached data even without a client
+            if self._fp_data:
+                data["flowpower_data"] = self._fp_data
             return
 
         now = time_mod.time()
@@ -405,6 +435,7 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         account_data = await self._fp_client.get_account_data()
         if account_data:
+            account_data.pop("cached", None)  # Clear stale flag
             self._fp_data = account_data
             self._fp_last_fetch = now
             data["flowpower_data"] = account_data
@@ -418,6 +449,7 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             # Keep stored cookies fresh after each successful fetch
             await self._save_fp_cookies()
+            await self._save_fp_data_cache()
         elif not self._fp_client.is_authenticated:
             # Session expired — try restoring (with backoff)
             if now < self._fp_restore_backoff_until:
@@ -434,10 +466,12 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 # Retry the fetch with restored session
                 account_data = await self._fp_client.get_account_data()
                 if account_data:
+                    account_data.pop("cached", None)
                     self._fp_data = account_data
                     self._fp_last_fetch = now
                     data["flowpower_data"] = account_data
                     _LOGGER.info("Flow Power: Account data fetched after session restore")
+                    await self._save_fp_data_cache()
                     return
             # Restore failed — apply exponential backoff (30s, 60s, 120s, ... max 10min)
             self._fp_restore_failures += 1
