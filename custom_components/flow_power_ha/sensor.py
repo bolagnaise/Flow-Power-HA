@@ -343,9 +343,17 @@ class FlowPowerForecastSensor(FlowPowerBaseSensor):
 
     @property
     def native_value(self) -> float | None:
-        """Return the current price (first forecast value) in $/kWh."""
-        if self.coordinator.data and self.coordinator.data.get("import_price"):
-            return self.coordinator.data["import_price"].get("final_dollars")
+        """Return the next forecast period price in $/kWh.
+
+        Uses the second forecast period (index 1) so this sensor shows
+        the upcoming price rather than mirroring the current import sensor.
+        Falls back to the first period if only one is available.
+        """
+        if self.coordinator.data and self.coordinator.data.get("forecast"):
+            forecast = self.coordinator.data["forecast"]
+            # Prefer next period (index 1) over current (index 0)
+            idx = 1 if len(forecast) > 1 else 0
+            return forecast[idx].get("price_dollars")
         return None
 
     @property
