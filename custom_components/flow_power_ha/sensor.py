@@ -405,6 +405,23 @@ class FlowPowerForecastSensor(FlowPowerBaseSensor):
             attrs["wholesale_cents"] = wholesale_cents
             attrs["forecast_length"] = len(prices)
 
+            # Pre-built ApexCharts series: [[epoch_ms, cents], ...]
+            apex_import = []
+            apex_wholesale = []
+            for period in forecast:
+                raw_ts = period.get("timestamp", "")
+                dt = self._parse_timestamp_to_datetime(raw_ts)
+                if dt:
+                    epoch_ms = int(dt.timestamp() * 1000)
+                    apex_import.append(
+                        [epoch_ms, period.get("price_cents", 0)]
+                    )
+                    apex_wholesale.append(
+                        [epoch_ms, period.get("wholesale_cents", 0)]
+                    )
+            attrs["apex_forecast_import"] = apex_import
+            attrs["apex_forecast_wholesale"] = apex_wholesale
+
         if self.coordinator.data:
             attrs["last_update"] = self.coordinator.data.get("last_update")
 
