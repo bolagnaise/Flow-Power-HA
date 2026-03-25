@@ -107,6 +107,40 @@ When the Flow Power portal is connected, the Account PEA sensor exposes these at
 | `avg_import_usage_kw` | 30-day average import demand (kW) |
 | `max_usage_kw` | Maximum demand (kW) |
 
+## Price Forecast Chart
+
+The forecast sensor includes pre-built data for charting the full forward price curve (next ~19 hours). Requires [ApexCharts Card](https://github.com/RomRider/apexcharts-card) from HACS.
+
+```yaml
+type: custom:apexcharts-card
+header:
+  title: Price Forecast
+  show: true
+graph_span: 24h
+span:
+  start: minute
+series:
+  - entity: sensor.flow_power_qld1_price_forecast
+    data_generator: |
+      return entity.attributes.apex_forecast_import;
+    name: Import
+    unit: c/kWh
+    color: orange
+  - entity: sensor.flow_power_qld1_price_forecast
+    data_generator: |
+      return entity.attributes.apex_forecast_wholesale;
+    name: Wholesale
+    unit: c/kWh
+    color: cyan
+```
+
+Replace `qld1` with your region (`nsw1`, `vic1`, `sa1`, `tas1`).
+
+| Attribute | Description |
+|-----------|-------------|
+| `apex_forecast_import` | Full forward curve of import prices in c/kWh (ready for ApexCharts) |
+| `apex_forecast_wholesale` | Full forward curve of wholesale prices in c/kWh |
+
 ## EMHASS Integration
 
 The `sensor.flow_power_price_forecast` sensor provides attributes compatible with EMHASS:
