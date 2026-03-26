@@ -102,6 +102,12 @@
       }
     }
   },
+  "issues": {
+    "session_expired": {
+      "title": "Flow Power portal session expired",
+      "description": "Your Flow Power portal session has expired and account data (PEA, TWAP, LWAP) is no longer updating. Go to **Settings > Devices & Services > Flow Power HA > Configure** and toggle **Re-authenticate with Flow Power portal** to restore your session."
+    }
+  },
   "entity": {
     "sensor": {
       "import_price": {

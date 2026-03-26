@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import aiohttp
+from homeassistant.components.repairs import IssueSeverity, async_create_issue, async_delete_issue
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.storage import Store
@@ -407,6 +408,8 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._fp_auth_failed = False
             self._fp_restore_failures = 0
             self._fp_restore_backoff_until = 0
+            # Clear the reauth repair alert
+            async_delete_issue(self.hass, DOMAIN, "session_expired")
             _LOGGER.info("Flow Power: Picked up authenticated client from reauth flow")
             return True
         return False
@@ -441,6 +444,7 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             data["flowpower_data"] = account_data
             self._fp_restore_failures = 0
             self._fp_restore_backoff_until = 0
+            async_delete_issue(self.hass, DOMAIN, "session_expired")
             _LOGGER.info(
                 "Flow Power: Account data updated - TWAP=%.2f, PEA=%.2f, LWAP=%.2f",
                 account_data.get("twap", 0),
@@ -462,6 +466,7 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if await self._fp_client.restore_session():
                 self._fp_restore_failures = 0
                 self._fp_restore_backoff_until = 0
+                async_delete_issue(self.hass, DOMAIN, "session_expired")
                 await self._save_fp_cookies()
                 # Retry the fetch with restored session
                 account_data = await self._fp_client.get_account_data()
@@ -477,6 +482,16 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._fp_restore_failures += 1
             backoff = min(30 * (2 ** (self._fp_restore_failures - 1)), 600)
             self._fp_restore_backoff_until = now + backoff
+            # Raise repair alert once backoff reaches max (600s)
+            if backoff >= 600:
+                async_create_issue(
+                    self.hass,
+                    DOMAIN,
+                    "session_expired",
+                    is_fixable=False,
+                    severity=IssueSeverity.WARNING,
+                    translation_key="session_expired",
+                )
             if self._fp_data:
                 data["flowpower_data"] = self._fp_data
                 _LOGGER.warning(
