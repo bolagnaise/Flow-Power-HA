@@ -1071,8 +1071,8 @@ class FlowPowerPortalClient:
             _LOGGER.error("Flow Power: Failed to parse userObject JSON: %s", e)
             return None
 
-        # Log all fields (helps identify BPEA, CPEA etc.)
-        _LOGGER.info(
+        # Log all fields for debugging
+        _LOGGER.debug(
             "Flow Power: userObject ALL fields=%s",
             {k: v for k, v in user_obj.items() if not isinstance(v, (dict, list))},
         )
@@ -1095,6 +1095,11 @@ class FlowPowerPortalClient:
             "pea_actual": user_obj.get("PEAActual"),
             "pea_target": user_obj.get("PEATarget"),
             "pea_actual_import": user_obj.get("PEAActualImport"),
+            "pea_target_import": user_obj.get("PEATargetImport"),
+            "bpea": user_obj.get("PEATarget"),
+            "bpea_import": user_obj.get("PEATargetImport"),
+            "cpea": (user_obj.get("LWAP") or 0) - (user_obj.get("TWAP") or 0),
+            "cpea_import": (user_obj.get("LWAPImp") or 0) - (user_obj.get("TWAPImp") or 0),
             "site_losses_dlf": user_obj.get("SiteLosses"),
             "gst_multiplier": user_obj.get("GST"),
         }

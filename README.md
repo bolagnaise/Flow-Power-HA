@@ -100,7 +100,11 @@ When the Flow Power portal is connected, the Account PEA sensor exposes these at
 | `pea_30_days` | 30-day PEA net (c/kWh) |
 | `pea_30_import` | 30-day PEA import only (c/kWh) |
 | `pea_actual` | Current PEA (c/kWh) |
-| `pea_target` | PEA target (c/kWh) |
+| `pea_target` | PEA target / BPEA (c/kWh) |
+| `bpea` | Benchmark PEA — average customer performance (c/kWh) |
+| `bpea_import` | BPEA for imports only (c/kWh) |
+| `cpea` | Customer PEA — your usage pattern vs average price, LWAP - TWAP (c/kWh) |
+| `cpea_import` | CPEA for imports only (c/kWh) |
 | `site_losses_dlf` | Distribution Loss Factor |
 | `gst_multiplier` | GST multiplier |
 | `avg_usage_kw` | 30-day average demand (kW) |
