@@ -1025,8 +1025,18 @@ class FlowPowerPortalClient:
                     return None
 
                 html_response = await resp.text()
+                _LOGGER.info(
+                    "Flow Power: report/get response status=%s, html_len=%d",
+                    resp.status, len(html_response),
+                )
 
-            return self._parse_user_object(html_response)
+            result = self._parse_user_object(html_response)
+            if result is None:
+                _LOGGER.warning(
+                    "Flow Power: userObject not found in response (html snippet=%s)",
+                    html_response[:300] if html_response else "(empty)",
+                )
+            return result
 
         except Exception as e:
             _LOGGER.error("Flow Power: Error fetching account data: %s", e)
@@ -1061,9 +1071,9 @@ class FlowPowerPortalClient:
             _LOGGER.error("Flow Power: Failed to parse userObject JSON: %s", e)
             return None
 
-        # Log all fields for debugging (helps identify BPEA, CPEA etc.)
-        _LOGGER.debug(
-            "Flow Power: userObject keys=%s",
+        # Log all fields (helps identify BPEA, CPEA etc.)
+        _LOGGER.info(
+            "Flow Power: userObject ALL fields=%s",
             {k: v for k, v in user_obj.items() if not isinstance(v, (dict, list))},
         )
 
