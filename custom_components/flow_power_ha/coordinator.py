@@ -7,7 +7,20 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import aiohttp
-from homeassistant.helpers.issue_registry import IssueSeverity, async_create_issue, async_delete_issue
+try:
+    from homeassistant.helpers.issue_registry import IssueSeverity, async_create_issue, async_delete_issue
+except ImportError:
+    try:
+        from homeassistant.components.repairs import IssueSeverity, async_create_issue, async_delete_issue
+    except ImportError:
+        # HA version too old for repairs — stub out
+        IssueSeverity = None  # type: ignore[assignment,misc]
+
+        def async_create_issue(*args, **kwargs):  # type: ignore[misc]
+            pass
+
+        def async_delete_issue(*args, **kwargs):  # type: ignore[misc]
+            pass
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.storage import Store
@@ -483,7 +496,7 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             backoff = min(30 * (2 ** (self._fp_restore_failures - 1)), 600)
             self._fp_restore_backoff_until = now + backoff
             # Raise repair alert once backoff reaches max (600s)
-            if backoff >= 600:
+            if backoff >= 600 and IssueSeverity is not None:
                 async_create_issue(
                     self.hass,
                     DOMAIN,
