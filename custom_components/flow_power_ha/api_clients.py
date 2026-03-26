@@ -1061,6 +1061,12 @@ class FlowPowerPortalClient:
             _LOGGER.error("Flow Power: Failed to parse userObject JSON: %s", e)
             return None
 
+        # Log all fields for debugging (helps identify BPEA, CPEA etc.)
+        _LOGGER.debug(
+            "Flow Power: userObject keys=%s",
+            {k: v for k, v in user_obj.items() if not isinstance(v, (dict, list))},
+        )
+
         # Extract the pricing fields we care about
         return {
             "lwap": user_obj.get("LWAP"),
