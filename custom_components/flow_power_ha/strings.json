@@ -8,20 +8,6 @@
           "price_source": "Price Source"
         }
       },
-      "amber": {
-        "title": "Amber Electric API",
-        "description": "Enter your Amber Electric API key. You can find or create one at {amber_url}",
-        "data": {
-          "amber_api_key": "API Key"
-        }
-      },
-      "amber_site": {
-        "title": "Select Amber Site",
-        "description": "Select the Amber site to use for pricing.",
-        "data": {
-          "amber_site_id": "Site"
-        }
-      },
       "flowpower_login": {
         "title": "Flow Power Login",
         "description": "Enter your Flow Power portal credentials ({portal_url}). An SMS verification code will be sent to your registered phone number.",
@@ -44,6 +30,18 @@
           "nem_region": "Region"
         }
       },
+      "tariff": {
+        "title": "Network Tariff",
+        "description": "Select your electricity distributor and tariff to enable time-of-use pricing. Skip this step to use a flat base rate.",
+        "data": {
+          "fp_network": "Electricity Distributor (DNSP)",
+          "fp_tariff_code": "Tariff Code"
+        },
+        "data_description": {
+          "fp_network": "Your local electricity network operator",
+          "fp_tariff_code": "Your network tariff code (e.g. EA010, RESELE)"
+        }
+      },
       "pricing": {
         "title": "Pricing Configuration",
         "description": "Configure your Flow Power pricing settings. Enter rates as they appear in your PDS (GST inclusive).",
@@ -60,11 +58,10 @@
       }
     },
     "error": {
-      "invalid_api_key": "Invalid Amber API key",
-      "no_sites": "No sites found for this API key",
       "cannot_connect": "Failed to connect to API",
       "invalid_credentials": "Invalid Flow Power email or password",
       "invalid_mfa_code": "Invalid verification code",
+      "invalid_tariff": "Could not load tariff data for the selected network and tariff code",
       "mfa_verification_failed": "SMS verification failed — please try again",
       "unknown": "Unexpected error"
     },
@@ -81,6 +78,8 @@
           "base_rate": "Base Rate (c/kWh)",
           "pea_enabled": "Enable PEA Calculation",
           "pea_custom_value": "Custom PEA Value (c/kWh)",
+          "fp_network": "Electricity Distributor (DNSP)",
+          "fp_tariff_code": "Tariff Code",
           "reauth_flowpower": "Re-authenticate with Flow Power portal",
           "connect_flowpower": "Connect Flow Power portal account"
         }
@@ -127,6 +126,9 @@
       },
       "flowpower_account": {
         "name": "Account PEA (Actual)"
+      },
+      "network_tariff": {
+        "name": "Network Tariff"
       }
     }
   }

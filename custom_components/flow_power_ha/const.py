@@ -17,6 +17,56 @@ NEM_REGIONS = {
     "TAS1": "Tasmania",
 }
 
+# GST multiplier
+FLOW_POWER_GST = 1.1
+
+# Network tariff configuration keys
+CONF_FP_NETWORK = "fp_network"
+CONF_FP_TARIFF_CODE = "fp_tariff_code"
+
+# NEM region → list of DNSP display names
+REGION_NETWORKS = {
+    "NSW1": ["Ausgrid", "Endeavour", "Essential"],
+    "QLD1": ["Energex", "Ergon"],
+    "VIC1": ["Powercor", "CitiPower", "AusNet", "Jemena", "United"],
+    "SA1": ["SAPN"],
+    "TAS1": ["TasNetworks"],
+}
+
+# Display name → aemo_to_tariff network parameter (for spot_to_tariff() calls)
+NETWORK_API_NAME = {
+    "Ausgrid": "ausgrid",
+    "Endeavour": "endeavour",
+    "Essential": "essential",
+    "Energex": "energex",
+    "Ergon": "ergon",
+    "SAPN": "sapn",
+    "Powercor": "powercor",
+    "CitiPower": "victoria",
+    "AusNet": "ausnet",
+    "Jemena": "jemena",
+    "United": "victoria",
+    "TasNetworks": "tasnetworks",
+    "Evoenergy": "evoenergy",
+}
+
+# Display name → aemo_to_tariff module name (for importlib imports)
+NETWORK_MODULE_NAME = {
+    "Ausgrid": "ausgrid",
+    "Endeavour": "endeavour",
+    "Essential": "essential",
+    "Energex": "energex",
+    "Ergon": "ergon",
+    "SAPN": "sapower",
+    "Powercor": "powercor",
+    "CitiPower": "victoria",
+    "AusNet": "ausnet",
+    "Jemena": "jemena",
+    "United": "victoria",
+    "TasNetworks": "tasnetworks",
+    "Evoenergy": "evoenergy",
+}
+
 # Export Rates by Region (Happy Hour rates in $/kWh)
 FLOW_POWER_EXPORT_RATES = {
     "NSW1": 0.45,  # 45c/kWh
@@ -31,14 +81,11 @@ HAPPY_HOUR_START = time(17, 30)  # 5:30 PM
 HAPPY_HOUR_END = time(19, 30)    # 7:30 PM
 
 # Price Sources
-PRICE_SOURCE_AMBER = "amber"
 PRICE_SOURCE_AEMO = "aemo"
 PRICE_SOURCE_FLOWPOWER = "flowpower"
 
 # Configuration Keys
 CONF_PRICE_SOURCE = "price_source"
-CONF_AMBER_API_KEY = "amber_api_key"
-CONF_AMBER_SITE_ID = "amber_site_id"
 CONF_NEM_REGION = "nem_region"
 CONF_BASE_RATE = "base_rate"
 CONF_PEA_ENABLED = "pea_enabled"
@@ -62,6 +109,7 @@ SENSOR_TYPE_WHOLESALE_PRICE = "wholesale_price"
 SENSOR_TYPE_PRICE_FORECAST = "price_forecast"
 SENSOR_TYPE_TWAP = "twap"
 SENSOR_TYPE_FLOWPOWER_ACCOUNT = "flowpower_account"
+SENSOR_TYPE_NETWORK_TARIFF = "network_tariff"
 
 # TWAP (Time Weighted Average Price) Settings
 DEFAULT_TWAP_WINDOW_DAYS = 30  # Rolling window for TWAP calculation
@@ -76,8 +124,6 @@ AEMO_PREDISPATCH_PRICES_URL = "https://visualisations.aemo.com.au/aemo/apps/api/
 # NEMWEB ZIP endpoints (faster - raw source data)
 AEMO_DISPATCH_URL = "https://nemweb.com.au/Reports/Current/DispatchIS_Reports/"
 AEMO_FORECAST_BASE_URL = "https://nemweb.com.au/Reports/Current/Predispatch_Reports/"
-
-AMBER_API_BASE_URL = "https://api.amber.com.au/v1"
 
 # Flow Power Portal API URLs
 FLOWPOWER_BASE_URL = "https://flowpower.kwatch.com.au"

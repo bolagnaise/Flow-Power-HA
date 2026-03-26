@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import time as time_mod
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import aiohttp
@@ -26,13 +26,13 @@ from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api_clients import AEMOClient, AmberClient, FlowPowerPortalClient
+from .api_clients import AEMOClient, FlowPowerPortalClient
 from .const import (
-    CONF_AMBER_API_KEY,
-    CONF_AMBER_SITE_ID,
     CONF_BASE_RATE,
     CONF_FLOWPOWER_EMAIL,
     CONF_FLOWPOWER_PASSWORD,
+    CONF_FP_NETWORK,
+    CONF_FP_TARIFF_CODE,
     CONF_NEM_REGION,
     CONF_PEA_CUSTOM_VALUE,
     CONF_PEA_ENABLED,
@@ -41,12 +41,13 @@ from .const import (
     DEFAULT_TWAP_WINDOW_DAYS,
     DOMAIN,
     MIN_TWAP_SAMPLES,
+    NETWORK_API_NAME,
     PRICE_SOURCE_AEMO,
-    PRICE_SOURCE_AMBER,
     PRICE_SOURCE_FLOWPOWER,
     UPDATE_INTERVAL_CURRENT,
     UPDATE_INTERVAL_FLOWPOWER,
 )
+from .tariff_utils import compute_avg_daily_tariff, get_network_tariff_rate
 from .pricing import (
     calculate_export_price,
     calculate_forecast_prices,
@@ -79,7 +80,6 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.config = config
         self._session: aiohttp.ClientSession | None = None
         self._aemo_client: AEMOClient | None = None
-        self._amber_client: AmberClient | None = None
         self._fp_client: FlowPowerPortalClient | None = None
         self._unsub_time_listeners: list = []
 
@@ -90,9 +90,12 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.pea_enabled = config.get(CONF_PEA_ENABLED, True)
         self.pea_custom_value = config.get(CONF_PEA_CUSTOM_VALUE)
 
-        # Amber config
-        self.amber_api_key = config.get(CONF_AMBER_API_KEY)
-        self.amber_site_id = config.get(CONF_AMBER_SITE_ID)
+        # Network tariff config
+        self._fp_network = config.get(CONF_FP_NETWORK)
+        self._fp_tariff_code = config.get(CONF_FP_TARIFF_CODE)
+        self._network_tariff_rate: float | None = None
+        self._avg_daily_tariff: float | None = None
+        self._tariff_schedule: dict[int, float] | None = None
 
         # Flow Power portal config (may come from initial data or options)
         self.fp_email = config.get(CONF_FLOWPOWER_EMAIL)
@@ -141,6 +144,16 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._unsub_time_listeners.append(unsub_happy_hour)
 
+        # Network tariff refresh: every 5 minutes
+        if self._fp_network and self._fp_tariff_code:
+            unsub_tariff = async_track_time_change(
+                self.hass,
+                self._handle_tariff_refresh,
+                minute=[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55],
+                second=[0],
+            )
+            self._unsub_time_listeners.append(unsub_tariff)
+
         _LOGGER.info(
             "Flow Power: Polling enabled - AEMO every 30 seconds, "
             "Happy Hour at 17:30:00/19:30:00"
@@ -158,21 +171,84 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         _LOGGER.info("Flow Power: Happy Hour transition update at %s", now)
         self.hass.async_create_task(self.async_request_refresh())
 
+    @callback
+    def _handle_tariff_refresh(self, now: datetime) -> None:
+        """Refresh the network tariff rate every 5 minutes."""
+        if not self._fp_network or not self._fp_tariff_code:
+            return
+        api_name = NETWORK_API_NAME.get(self._fp_network)
+        if not api_name:
+            return
+
+        async def _refresh() -> None:
+            rate = await self.hass.async_add_executor_job(
+                get_network_tariff_rate,
+                datetime.now(timezone.utc),
+                api_name,
+                self._fp_tariff_code,
+            )
+            if rate is not None:
+                self._network_tariff_rate = rate
+                _LOGGER.debug(
+                    "Flow Power: Updated network tariff rate: %.4f c/kWh",
+                    rate,
+                )
+
+        self.hass.async_create_task(_refresh())
+
     async def _async_setup(self) -> None:
         """Set up the coordinator."""
         self._session = aiohttp.ClientSession()
 
         if self.price_source == PRICE_SOURCE_AEMO:
             self._aemo_client = AEMOClient(self._session)
-        elif self.price_source == PRICE_SOURCE_AMBER and self.amber_api_key:
-            self._amber_client = AmberClient(
-                self._session,
-                self.amber_api_key,
-                self.amber_site_id,
-            )
         elif self.price_source == PRICE_SOURCE_FLOWPOWER:
             # Flow Power portal uses AEMO for spot prices + portal for account data
             self._aemo_client = AEMOClient(self._session)
+
+        # Initialise network tariff data if configured
+        if self._fp_network and self._fp_tariff_code:
+            api_name = NETWORK_API_NAME.get(self._fp_network)
+            if api_name:
+                self._avg_daily_tariff = await self.hass.async_add_executor_job(
+                    compute_avg_daily_tariff, api_name, self._fp_tariff_code,
+                )
+                self._network_tariff_rate = await self.hass.async_add_executor_job(
+                    get_network_tariff_rate,
+                    datetime.now(timezone.utc),
+                    api_name,
+                    self._fp_tariff_code,
+                )
+                # Build tariff schedule: slot index (0-47) → tariff rate
+                schedule: dict[int, float] = {}
+                from zoneinfo import ZoneInfo
+
+                aest = ZoneInfo("Australia/Sydney")
+                base_date = datetime.now(aest).replace(
+                    hour=0, minute=0, second=0, microsecond=0,
+                )
+                for slot in range(48):
+                    slot_time = base_date + timedelta(minutes=slot * 30)
+                    rate = await self.hass.async_add_executor_job(
+                        get_network_tariff_rate,
+                        slot_time,
+                        api_name,
+                        self._fp_tariff_code,
+                    )
+                    if rate is not None:
+                        schedule[slot] = rate
+                self._tariff_schedule = schedule if schedule else None
+
+                _LOGGER.info(
+                    "Flow Power: Network tariff initialised — network=%s, "
+                    "tariff_code=%s, current_rate=%.4f c/kWh, "
+                    "avg_daily=%.4f c/kWh, schedule_slots=%d",
+                    self._fp_network,
+                    self._fp_tariff_code,
+                    self._network_tariff_rate if self._network_tariff_rate is not None else 0.0,
+                    self._avg_daily_tariff if self._avg_daily_tariff is not None else 0.0,
+                    len(schedule),
+                )
 
         # Pick up authenticated portal client from config/options flow if available
         pending = self.hass.data.get(DOMAIN, {}).pop("_pending_fp_client", None)
@@ -293,6 +369,8 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "twap_days": self._get_twap_days(),
                 "twap_samples": len(self._price_history),
                 "flowpower_data": None,
+                "network_tariff_rate": self._network_tariff_rate,
+                "avg_daily_tariff": self._avg_daily_tariff,
             }
 
             # Fetch Flow Power portal account data (or serve cached data)
@@ -325,6 +403,8 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         pea_enabled=self.pea_enabled,
                         pea_custom_value=self.pea_custom_value,
                         twap=twap_for_calc,
+                        network_tariff_rate=self._network_tariff_rate,
+                        avg_daily_tariff=self._avg_daily_tariff,
                     )
 
                     data["import_price"] = import_info
@@ -349,54 +429,10 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         pea_enabled=self.pea_enabled,
                         pea_custom_value=self.pea_custom_value,
                         twap=twap_for_forecast,
+                        tariff_schedule=self._tariff_schedule,
+                        avg_daily_tariff=self._avg_daily_tariff,
                     )
                     _LOGGER.info("Calculated forecast periods: %d", len(data["forecast"]))
-
-            elif self.price_source == PRICE_SOURCE_AMBER and self._amber_client:
-                current_prices = await self._amber_client.get_current_prices()
-
-                # Find general (import) channel
-                for price in current_prices:
-                    if price.get("channelType") == "general":
-                        wholesale_cents = self._amber_client.extract_wholesale_price(price)
-
-                        # Record wholesale price for TWAP calculation
-                        self._record_price(wholesale_cents)
-                        data["twap"] = self._twap
-                        data["twap_days"] = self._get_twap_days()
-                        data["twap_samples"] = len(self._price_history)
-
-                        # Calculate import price with dynamic TWAP
-                        import_info = calculate_import_price(
-                            wholesale_cents=wholesale_cents,
-                            base_rate=self.base_rate,
-                            pea_enabled=self.pea_enabled,
-                            pea_custom_value=self.pea_custom_value,
-                            twap=self._twap,
-                        )
-
-                        data["import_price"] = import_info
-                        data["wholesale_price"] = wholesale_cents
-                        data["last_update"] = price.get("nemTime")
-                        break
-
-                # Fetch forecast
-                forecast_raw = await self._amber_client.get_price_forecast(
-                    next_hours=48, resolution=30
-                )
-                # Filter to general channel
-                general_forecast = [
-                    p for p in forecast_raw
-                    if p.get("channelType") == "general"
-                ]
-                if general_forecast:
-                    data["forecast"] = calculate_forecast_prices(
-                        general_forecast,
-                        base_rate=self.base_rate,
-                        pea_enabled=self.pea_enabled,
-                        pea_custom_value=self.pea_custom_value,
-                        twap=self._twap,
-                    )
 
             # Calculate export price (always based on region and time)
             data["export_price"] = calculate_export_price(self.region)

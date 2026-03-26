@@ -9,30 +9,57 @@ from .const import (
     FLOW_POWER_BENCHMARK,
     FLOW_POWER_DEFAULT_BASE_RATE,
     FLOW_POWER_EXPORT_RATES,
+    FLOW_POWER_GST,
     FLOW_POWER_MARKET_AVG,
     HAPPY_HOUR_END,
     HAPPY_HOUR_START,
 )
 
 
-def calculate_pea(wholesale_cents: float, twap: float | None = None) -> float:
+def calculate_pea(
+    wholesale_cents: float,
+    twap: float | None = None,
+    network_tariff_rate: float | None = None,
+    avg_daily_tariff: float | None = None,
+) -> float:
     """Calculate the Price Efficiency Adjustment (PEA).
 
-    PEA = Wholesale - TWAP - BPEA
+    Legacy formula (when network tariff params not provided):
+        PEA = Wholesale - TWAP - BPEA
+
+    V2 formula (when both network tariff params provided):
+        PEA = GST * Wholesale + network_tariff_rate - GST * TWAP - avg_daily_tariff - BPEA
 
     Where:
         TWAP = Time Weighted Average Price (dynamic 30-day rolling average,
                or default 8.0 c/kWh when insufficient data)
         BPEA = Benchmark Price Efficiency Adjustment (1.7 c/kWh)
+        GST = 1.1 (10% Goods and Services Tax)
+        network_tariff_rate = current TOU network tariff rate in c/kWh
+        avg_daily_tariff = 24h average network tariff in c/kWh
 
     Args:
         wholesale_cents: Wholesale price in c/kWh
         twap: Dynamic TWAP in c/kWh, or None to use default (8.0)
+        network_tariff_rate: Current TOU network tariff rate in c/kWh, or None
+        avg_daily_tariff: 24h average network tariff in c/kWh, or None
 
     Returns:
         PEA value in c/kWh (can be negative)
     """
     market_avg = twap if twap is not None else FLOW_POWER_MARKET_AVG
+
+    if network_tariff_rate is not None and avg_daily_tariff is not None:
+        # V2 formula with network tariff support
+        return (
+            FLOW_POWER_GST * wholesale_cents
+            + network_tariff_rate
+            - FLOW_POWER_GST * market_avg
+            - avg_daily_tariff
+            - FLOW_POWER_BENCHMARK
+        )
+
+    # Legacy formula
     return wholesale_cents - market_avg - FLOW_POWER_BENCHMARK
 
 
@@ -42,11 +69,14 @@ def calculate_import_price(
     pea_enabled: bool = True,
     pea_custom_value: float | None = None,
     twap: float | None = None,
+    network_tariff_rate: float | None = None,
+    avg_daily_tariff: float | None = None,
 ) -> dict[str, float]:
     """Calculate the final import price using Flow Power PEA formula.
 
     Final Rate = Base Rate + PEA
-    Where PEA = Wholesale - TWAP - BPEA
+    Where PEA = Wholesale - TWAP - BPEA (legacy)
+    Or PEA = GST*Wholesale + network_tariff - GST*TWAP - avg_tariff - BPEA (V2)
 
     The base_rate should be entered as it appears in the PDS (GST inclusive,
     with network charges already built in).
@@ -57,6 +87,8 @@ def calculate_import_price(
         pea_enabled: Whether to apply PEA calculation
         pea_custom_value: Optional fixed PEA override in c/kWh
         twap: Dynamic TWAP in c/kWh, or None to use default (8.0)
+        network_tariff_rate: Current TOU network tariff rate in c/kWh, or None
+        avg_daily_tariff: 24h average network tariff in c/kWh, or None
 
     Returns:
         Dict with price breakdown:
@@ -67,15 +99,19 @@ def calculate_import_price(
             'pea': -1.5,             # PEA adjustment in c/kWh
             'wholesale': 8.2,         # Wholesale in c/kWh
             'twap_used': 7.5,        # TWAP value used in calculation
+            'network_tariff_rate': 5.0,  # Network tariff rate (None if not provided)
+            'avg_daily_tariff': 4.2,     # Avg daily tariff (None if not provided)
         }
     """
     twap_used = twap if twap is not None else FLOW_POWER_MARKET_AVG
 
-    result = {
+    result: dict[str, Any] = {
         "wholesale": wholesale_cents,
         "base_rate": base_rate,
         "pea": 0.0,
         "twap_used": twap_used,
+        "network_tariff_rate": network_tariff_rate,
+        "avg_daily_tariff": avg_daily_tariff,
         "final_cents": 0.0,
         "final_dollars": 0.0,
     }
@@ -85,7 +121,12 @@ def calculate_import_price(
         if pea_custom_value is not None:
             pea = pea_custom_value
         else:
-            pea = calculate_pea(wholesale_cents, twap=twap)
+            pea = calculate_pea(
+                wholesale_cents,
+                twap=twap,
+                network_tariff_rate=network_tariff_rate,
+                avg_daily_tariff=avg_daily_tariff,
+            )
 
         result["pea"] = pea
         final_cents = base_rate + pea
@@ -176,6 +217,8 @@ def calculate_forecast_prices(
     pea_enabled: bool = True,
     pea_custom_value: float | None = None,
     twap: float | None = None,
+    tariff_schedule: dict[int, float] | None = None,
+    avg_daily_tariff: float | None = None,
 ) -> list[dict[str, Any]]:
     """Calculate import prices for a forecast array.
 
@@ -185,6 +228,9 @@ def calculate_forecast_prices(
         pea_enabled: Whether to apply PEA calculation
         pea_custom_value: Optional fixed PEA override in c/kWh
         twap: Dynamic TWAP in c/kWh, or None to use default
+        tariff_schedule: Maps half-hour slot index (0-47) to tariff rate in c/kWh,
+                         or None to skip network tariff in PEA
+        avg_daily_tariff: 24h average network tariff in c/kWh, or None
 
     Returns:
         List of forecast periods with calculated prices:
@@ -201,15 +247,24 @@ def calculate_forecast_prices(
     results = []
 
     for period in forecast_data:
-        # Extract wholesale price (handle both Amber and AEMO formats)
-        if "spotPerKwh" in period:
-            # Amber format: spot price in c/kWh
-            wholesale_cents = period["spotPerKwh"]
-        elif "perKwh" in period:
-            # AEMO format: c/kWh
+        # Extract wholesale price (AEMO format: c/kWh)
+        if "perKwh" in period:
             wholesale_cents = period["perKwh"]
         else:
             continue
+
+        # Determine per-period network tariff rate from schedule
+        network_tariff_rate: float | None = None
+        if tariff_schedule is not None:
+            timestamp_str = period.get("nemTime") or period.get("startTime") or ""
+            if timestamp_str:
+                try:
+                    dt = datetime.fromisoformat(timestamp_str)
+                    # Half-hour slot: 0-47 (hour * 2 + minute // 30)
+                    slot_index = dt.hour * 2 + dt.minute // 30
+                    network_tariff_rate = tariff_schedule.get(slot_index)
+                except (ValueError, TypeError):
+                    pass
 
         # Calculate final price
         price_info = calculate_import_price(
@@ -218,6 +273,8 @@ def calculate_forecast_prices(
             pea_enabled=pea_enabled,
             pea_custom_value=pea_custom_value,
             twap=twap,
+            network_tariff_rate=network_tariff_rate,
+            avg_daily_tariff=avg_daily_tariff,
         )
 
         # Extract timestamp
@@ -229,6 +286,7 @@ def calculate_forecast_prices(
             "price_cents": price_info["final_cents"],
             "wholesale_cents": wholesale_cents,
             "pea": price_info["pea"],
+            "network_tariff_rate": network_tariff_rate,
         })
 
     return results

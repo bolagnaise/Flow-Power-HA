@@ -2,33 +2,35 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
-import aiohttp
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
 
-from .api_clients import AmberClient, FlowPowerPortalClient
+from .api_clients import FlowPowerPortalClient
 from .const import (
-    CONF_AMBER_API_KEY,
-    CONF_AMBER_SITE_ID,
     CONF_BASE_RATE,
     CONF_FLOWPOWER_EMAIL,
     CONF_FLOWPOWER_PASSWORD,
+    CONF_FP_NETWORK,
+    CONF_FP_TARIFF_CODE,
     CONF_NEM_REGION,
     CONF_PEA_CUSTOM_VALUE,
     CONF_PEA_ENABLED,
     CONF_PRICE_SOURCE,
     DEFAULT_BASE_RATE,
     DOMAIN,
+    NETWORK_API_NAME,
     NEM_REGIONS,
     PRICE_SOURCE_AEMO,
-    PRICE_SOURCE_AMBER,
     PRICE_SOURCE_FLOWPOWER,
+    REGION_NETWORKS,
 )
+from .tariff_utils import get_network_tariff_rate
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,12 +38,12 @@ _LOGGER = logging.getLogger(__name__)
 class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Flow Power Sync."""
 
-    VERSION = 1
+    VERSION = 2
 
     def __init__(self) -> None:
         """Initialize the config flow."""
         self._data: dict[str, Any] = {}
-        self._amber_sites: list[dict[str, Any]] = []
+        self._region: str = "NSW1"
         self._fp_client: FlowPowerPortalClient | None = None
 
     async def async_step_user(
@@ -53,9 +55,7 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             self._data[CONF_PRICE_SOURCE] = user_input[CONF_PRICE_SOURCE]
 
-            if user_input[CONF_PRICE_SOURCE] == PRICE_SOURCE_AMBER:
-                return await self.async_step_amber()
-            elif user_input[CONF_PRICE_SOURCE] == PRICE_SOURCE_FLOWPOWER:
+            if user_input[CONF_PRICE_SOURCE] == PRICE_SOURCE_FLOWPOWER:
                 return await self.async_step_flowpower_login()
             else:
                 return await self.async_step_region()
@@ -67,7 +67,6 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     selector.SelectSelectorConfig(
                         options=[
                             selector.SelectOptionDict(value=PRICE_SOURCE_AEMO, label="AEMO (Direct wholesale)"),
-                            selector.SelectOptionDict(value=PRICE_SOURCE_AMBER, label="Amber Electric"),
                             selector.SelectOptionDict(value=PRICE_SOURCE_FLOWPOWER, label="Flow Power (Portal login)"),
                         ],
                         mode=selector.SelectSelectorMode.LIST,
@@ -75,76 +74,6 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ),
             }),
             errors=errors,
-        )
-
-    async def async_step_amber(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handle Amber API configuration."""
-        errors: dict[str, str] = {}
-
-        if user_input is not None:
-            # Validate Amber API key
-            api_key = user_input[CONF_AMBER_API_KEY]
-
-            try:
-                async with aiohttp.ClientSession() as session:
-                    client = AmberClient(session, api_key)
-                    sites = await client.get_sites()
-
-                    if not sites:
-                        errors["base"] = "no_sites"
-                    else:
-                        self._data[CONF_AMBER_API_KEY] = api_key
-                        self._amber_sites = sites
-
-                        if len(sites) == 1:
-                            self._data[CONF_AMBER_SITE_ID] = sites[0]["id"]
-                            return await self.async_step_region()
-                        else:
-                            return await self.async_step_amber_site()
-
-            except Exception as e:
-                _LOGGER.error("Error validating Amber API key: %s", e)
-                errors["base"] = "invalid_api_key"
-
-        return self.async_show_form(
-            step_id="amber",
-            data_schema=vol.Schema({
-                vol.Required(CONF_AMBER_API_KEY): str,
-            }),
-            errors=errors,
-            description_placeholders={
-                "amber_url": "https://app.amber.com.au/developers",
-            },
-        )
-
-    async def async_step_amber_site(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handle Amber site selection."""
-        if user_input is not None:
-            self._data[CONF_AMBER_SITE_ID] = user_input[CONF_AMBER_SITE_ID]
-            return await self.async_step_region()
-
-        site_options = [
-            selector.SelectOptionDict(
-                value=site["id"],
-                label=f"{site.get('nmi', 'Unknown NMI')} - {site.get('network', 'Unknown Network')}",
-            )
-            for site in self._amber_sites
-        ]
-
-        return self.async_show_form(
-            step_id="amber_site",
-            data_schema=vol.Schema({
-                vol.Required(CONF_AMBER_SITE_ID): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=site_options,
-                        mode=selector.SelectSelectorMode.DROPDOWN,
-                    )
-                ),
-            }),
         )
 
     async def async_step_flowpower_login(
@@ -229,7 +158,8 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle NEM region selection."""
         if user_input is not None:
             self._data[CONF_NEM_REGION] = user_input[CONF_NEM_REGION]
-            return await self.async_step_pricing()
+            self._region = user_input[CONF_NEM_REGION]
+            return await self.async_step_tariff()
 
         region_options = [
             selector.SelectOptionDict(value=code, label=f"{code} - {name}")
@@ -246,6 +176,59 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
                 ),
             }),
+        )
+
+    async def async_step_tariff(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle network tariff configuration."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            fp_network = user_input.get(CONF_FP_NETWORK, "")
+            fp_tariff_code = user_input.get(CONF_FP_TARIFF_CODE, "")
+
+            if not fp_network or fp_network == "skip":
+                # Flat rate mode — skip tariff configuration
+                return await self.async_step_pricing()
+
+            # Validate the tariff code by calling get_network_tariff_rate
+            api_name = NETWORK_API_NAME.get(fp_network)
+            if not api_name:
+                errors["base"] = "invalid_tariff"
+            else:
+                now = datetime.now(timezone.utc)
+                rate = await self.hass.async_add_executor_job(
+                    get_network_tariff_rate, now, api_name, fp_tariff_code
+                )
+                if rate is not None:
+                    self._data[CONF_FP_NETWORK] = fp_network
+                    self._data[CONF_FP_TARIFF_CODE] = fp_tariff_code
+                    return await self.async_step_pricing()
+                else:
+                    errors["base"] = "invalid_tariff"
+
+        # Build network options from REGION_NETWORKS for the selected region
+        networks = REGION_NETWORKS.get(self._region, [])
+        network_options = [
+            selector.SelectOptionDict(value="skip", label="Skip (flat rate)"),
+        ] + [
+            selector.SelectOptionDict(value=n, label=n)
+            for n in networks
+        ]
+
+        return self.async_show_form(
+            step_id="tariff",
+            data_schema=vol.Schema({
+                vol.Required(CONF_FP_NETWORK, default="skip"): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=network_options,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Optional(CONF_FP_TARIFF_CODE, default=""): str,
+            }),
+            errors=errors,
         )
 
     async def async_step_pricing(
@@ -312,6 +295,16 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
 
         current = {**self.config_entry.data, **self.config_entry.options}
 
+        # Determine network options for the configured region
+        region = current.get(CONF_NEM_REGION, "NSW1")
+        networks = REGION_NETWORKS.get(region, [])
+        network_options = [
+            selector.SelectOptionDict(value="", label="None (flat rate)"),
+        ] + [
+            selector.SelectOptionDict(value=n, label=n)
+            for n in networks
+        ]
+
         # Build schema - add re-auth option for Flow Power portal users
         schema_fields: dict[Any, Any] = {
             vol.Required(
@@ -342,6 +335,19 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
                     mode=selector.NumberSelectorMode.BOX,
                 )
             ),
+            vol.Optional(
+                CONF_FP_NETWORK,
+                description={"suggested_value": current.get(CONF_FP_NETWORK, "")},
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=network_options,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Optional(
+                CONF_FP_TARIFF_CODE,
+                description={"suggested_value": current.get(CONF_FP_TARIFF_CODE, "")},
+            ): str,
         }
 
         # Flow Power portal: show connect or re-authenticate option

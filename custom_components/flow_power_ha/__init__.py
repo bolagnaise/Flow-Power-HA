@@ -75,8 +75,18 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     _LOGGER.debug("Migrating from version %s", config_entry.version)
 
     if config_entry.version == 1:
-        # Current version, no migration needed
-        pass
+        new_data = {**config_entry.data}
+
+        if new_data.get("price_source") == "amber":
+            _LOGGER.info(
+                "Migrating Amber config entry to AEMO — removing Amber credentials"
+            )
+            new_data["price_source"] = "aemo"
+            new_data.pop("amber_api_key", None)
+            new_data.pop("amber_site_id", None)
+
+        hass.config_entries.async_update_entry(config_entry, data=new_data, version=2)
+        _LOGGER.info("Migrated config entry from version 1 to version 2")
 
     _LOGGER.debug("Migration to version %s successful", config_entry.version)
     return True

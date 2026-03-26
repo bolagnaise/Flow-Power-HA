@@ -19,6 +19,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     CONF_FLOWPOWER_EMAIL,
+    CONF_FP_NETWORK,
     CONF_NEM_REGION,
     CONF_PRICE_SOURCE,
     DOMAIN,
@@ -30,6 +31,7 @@ from .const import (
     SENSOR_TYPE_EXPORT_PRICE,
     SENSOR_TYPE_FLOWPOWER_ACCOUNT,
     SENSOR_TYPE_IMPORT_PRICE,
+    SENSOR_TYPE_NETWORK_TARIFF,
     SENSOR_TYPE_PRICE_FORECAST,
     SENSOR_TYPE_TWAP,
     SENSOR_TYPE_WHOLESALE_PRICE,
@@ -70,6 +72,12 @@ async def async_setup_entry(
     if merged.get(CONF_FLOWPOWER_EMAIL):
         entities.append(
             FlowPowerAccountSensor(coordinator, config_entry, region)
+        )
+
+    # Add network tariff sensor when a network is configured
+    if merged.get(CONF_FP_NETWORK):
+        entities.append(
+            FlowPowerNetworkTariffSensor(coordinator, config_entry, region)
         )
 
     async_add_entities(entities)
@@ -200,6 +208,10 @@ class FlowPowerImportPriceSensor(FlowPowerBaseSensor):
 
         if self.coordinator.data:
             attrs["last_update"] = self.coordinator.data.get("last_update")
+            attrs["formula_version"] = (
+                "v2" if self.coordinator.data.get("network_tariff_rate") is not None
+                else "legacy"
+            )
 
         return attrs
 
@@ -548,4 +560,31 @@ class FlowPowerAccountSensor(FlowPowerBaseSensor):
             "max_usage_kw": fp_data.get("max_usage_kw"),
         })
 
+        return attrs
+
+
+class FlowPowerNetworkTariffSensor(FlowPowerBaseSensor):
+    """Sensor for current network tariff rate."""
+
+    _attr_name = "Network Tariff"
+    _attr_native_unit_of_measurement = "c/kWh"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:transmission-tower"
+
+    def __init__(self, coordinator, config_entry, region):
+        super().__init__(coordinator, config_entry, region, SENSOR_TYPE_NETWORK_TARIFF)
+
+    @property
+    def native_value(self):
+        if self.coordinator.data:
+            return self.coordinator.data.get("network_tariff_rate")
+        return None
+
+    @property
+    def extra_state_attributes(self):
+        attrs = {"region": self._region}
+        if self.coordinator.data:
+            attrs["avg_daily_tariff"] = self.coordinator.data.get("avg_daily_tariff")
+            attrs["network"] = self.coordinator.data.get("fp_network")
+            attrs["tariff_code"] = self.coordinator.data.get("fp_tariff_code")
         return attrs

@@ -1,4 +1,4 @@
-"""API clients for AEMO, Amber, and Flow Power portal price data."""
+"""API clients for AEMO and Flow Power portal price data."""
 from __future__ import annotations
 
 import asyncio
@@ -21,7 +21,6 @@ from .const import (
     AEMO_CURRENT_PRICE_URL,
     AEMO_DISPATCH_URL,
     AEMO_FORECAST_BASE_URL,
-    AMBER_API_BASE_URL,
     FLOWPOWER_BASE_URL,
     FLOWPOWER_B2C_POLICY,
     FLOWPOWER_B2C_TENANT,
@@ -377,133 +376,6 @@ class AEMOClient:
         except Exception as e:
             _LOGGER.error("Error parsing pre-dispatch ZIP: %s", e)
             return []
-
-
-class AmberClient:
-    """Client for fetching Amber Electric prices."""
-
-    def __init__(
-        self,
-        session: aiohttp.ClientSession,
-        api_key: str,
-        site_id: str | None = None,
-    ) -> None:
-        """Initialize the Amber client."""
-        self._session = session
-        self._api_key = api_key
-        self._site_id = site_id
-        self._headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Accept": "application/json",
-        }
-
-    async def get_sites(self) -> list[dict[str, Any]]:
-        """Get list of Amber sites for the account."""
-        try:
-            async with self._session.get(
-                f"{AMBER_API_BASE_URL}/sites",
-                headers=self._headers,
-                timeout=aiohttp.ClientTimeout(total=30),
-            ) as response:
-                if response.status != 200:
-                    _LOGGER.error("Amber API returned status %s", response.status)
-                    return []
-
-                return await response.json()
-
-        except Exception as e:
-            _LOGGER.error("Error fetching Amber sites: %s", e)
-            return []
-
-    async def get_current_prices(self) -> list[dict[str, Any]]:
-        """Get current prices for the configured site."""
-        site_id = self._site_id
-
-        if not site_id:
-            sites = await self.get_sites()
-            if sites:
-                site_id = sites[0].get("id")
-            else:
-                return []
-
-        try:
-            async with self._session.get(
-                f"{AMBER_API_BASE_URL}/sites/{site_id}/prices/current",
-                headers=self._headers,
-                timeout=aiohttp.ClientTimeout(total=30),
-            ) as response:
-                if response.status == 401 or response.status == 403:
-                    _LOGGER.error("Amber API authentication failed (status %s) - check your API key", response.status)
-                    return []
-                if response.status != 200:
-                    _LOGGER.error("Amber prices API returned status %s", response.status)
-                    return []
-
-                return await response.json()
-
-        except Exception as e:
-            _LOGGER.error("Error fetching Amber current prices: %s", e)
-            return []
-
-    async def get_price_forecast(
-        self,
-        next_hours: int = 48,
-        resolution: int = 30,
-    ) -> list[dict[str, Any]]:
-        """Get price forecast for the configured site.
-
-        Args:
-            next_hours: Number of hours to forecast
-            resolution: Resolution in minutes (5 or 30)
-
-        Returns:
-            List of forecast intervals with price data
-        """
-        site_id = self._site_id
-
-        if not site_id:
-            sites = await self.get_sites()
-            if sites:
-                site_id = sites[0].get("id")
-            else:
-                return []
-
-        try:
-            params = {
-                "next": next_hours,
-                "resolution": resolution,
-            }
-
-            async with self._session.get(
-                f"{AMBER_API_BASE_URL}/sites/{site_id}/prices",
-                headers=self._headers,
-                params=params,
-                timeout=aiohttp.ClientTimeout(total=30),
-            ) as response:
-                if response.status == 401 or response.status == 403:
-                    _LOGGER.error("Amber forecast API authentication failed (status %s) - check your API key", response.status)
-                    return []
-                if response.status != 200:
-                    _LOGGER.error("Amber forecast API returned status %s", response.status)
-                    return []
-
-                return await response.json()
-
-        except Exception as e:
-            _LOGGER.error("Error fetching Amber forecast: %s", e)
-            return []
-
-    def extract_wholesale_price(self, price_data: dict[str, Any]) -> float:
-        """Extract wholesale price from Amber price data.
-
-        Args:
-            price_data: Single price interval from Amber API
-
-        Returns:
-            Wholesale price in c/kWh
-        """
-        # Amber provides spotPerKwh in c/kWh (NEM spot price including GST)
-        return price_data.get("spotPerKwh", 0)
 
 
 class FlowPowerPortalClient:
