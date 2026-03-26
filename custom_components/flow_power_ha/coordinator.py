@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import aiohttp
-from homeassistant.components.repairs import IssueSeverity, async_create_issue, async_delete_issue
+from homeassistant.helpers.issue_registry import IssueSeverity, async_create_issue, async_delete_issue
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.storage import Store
