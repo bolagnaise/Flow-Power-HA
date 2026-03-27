@@ -111,6 +111,27 @@ SENSOR_TYPE_TWAP = "twap"
 SENSOR_TYPE_FLOWPOWER_ACCOUNT = "flowpower_account"
 SENSOR_TYPE_NETWORK_TARIFF = "network_tariff"
 
+# Portal account sensors — (sensor_type, name, data_key, unit, icon, source_label)
+# source_label: "portal" = direct from Flow Power, "calculated" = derived from portal data
+PORTAL_SENSORS = [
+    # PEA metrics
+    ("account_pea", "Account PEA (Actual)", "pea_actual", "c/kWh", "mdi:account-cash", "portal"),
+    ("account_pea_30d", "Account PEA 30-Day", "pea_30_days", "c/kWh", "mdi:calendar-month", "portal"),
+    ("account_bpea", "Account BPEA (Benchmark)", "bpea", "c/kWh", "mdi:target", "portal"),
+    ("account_cpea", "Account CPEA (Customer)", "cpea", "c/kWh", "mdi:account-arrow-right", "calculated"),
+    ("account_pea_import", "Account PEA Import", "pea_actual_import", "c/kWh", "mdi:import", "portal"),
+    # Weighted average prices
+    ("account_lwap", "Account LWAP", "lwap", "c/kWh", "mdi:scale-balance", "portal"),
+    ("account_lwap_actual", "Account LWAP (Actual)", "lwap_actual", "c/kWh", "mdi:scale-balance", "portal"),
+    ("account_twap", "Account TWAP", "twap", "c/kWh", "mdi:chart-timeline-variant", "portal"),
+    ("account_avg_rrp", "Account Avg Spot Price", "avg_rrp", "c/kWh", "mdi:lightning-bolt", "portal"),
+    # Site factors
+    ("account_dlf", "Account DLF (Site Losses)", "site_losses_dlf", None, "mdi:transmission-tower", "portal"),
+    # Usage metrics
+    ("account_avg_usage", "Account Avg Demand", "avg_usage_kw", "kW", "mdi:flash-outline", "portal"),
+    ("account_max_usage", "Account Max Demand", "max_usage_kw", "kW", "mdi:flash-alert", "portal"),
+]
+
 # TWAP (Time Weighted Average Price) Settings
 DEFAULT_TWAP_WINDOW_DAYS = 30  # Rolling window for TWAP calculation
 MIN_TWAP_SAMPLES = 12  # Minimum samples (~1 hour) before using dynamic TWAP

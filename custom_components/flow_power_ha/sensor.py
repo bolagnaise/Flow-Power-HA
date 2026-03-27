@@ -27,6 +27,7 @@ from .const import (
     FLOW_POWER_MARKET_AVG,
     HAPPY_HOUR_END,
     HAPPY_HOUR_START,
+    PORTAL_SENSORS,
     PRICE_SOURCE_FLOWPOWER,
     SENSOR_TYPE_EXPORT_PRICE,
     SENSOR_TYPE_FLOWPOWER_ACCOUNT,
@@ -67,12 +68,24 @@ async def async_setup_entry(
         FlowPowerTWAPSensor(coordinator, config_entry, region),
     ]
 
-    # Add Flow Power portal account sensor when portal credentials are configured
+    # Add Flow Power portal sensors when portal credentials are configured
     merged = {**config_entry.data, **config_entry.options}
     if merged.get(CONF_FLOWPOWER_EMAIL):
+        # Keep the main Account PEA sensor (has all attributes)
         entities.append(
             FlowPowerAccountSensor(coordinator, config_entry, region)
         )
+        # Add individual portal sensors for each metric
+        for sensor_type, name, data_key, unit, icon, source in PORTAL_SENSORS:
+            # Skip the main PEA — already covered by FlowPowerAccountSensor
+            if data_key == "pea_actual":
+                continue
+            entities.append(
+                FlowPowerPortalSensor(
+                    coordinator, config_entry, region,
+                    sensor_type, name, data_key, unit, icon, source,
+                )
+            )
 
     # Add network tariff sensor when a network is configured
     if merged.get(CONF_FP_NETWORK):
@@ -587,4 +600,53 @@ class FlowPowerNetworkTariffSensor(FlowPowerBaseSensor):
             attrs["avg_daily_tariff"] = self.coordinator.data.get("avg_daily_tariff")
             attrs["network"] = self.coordinator.data.get("fp_network")
             attrs["tariff_code"] = self.coordinator.data.get("fp_tariff_code")
+        return attrs
+
+
+class FlowPowerPortalSensor(FlowPowerBaseSensor):
+    """Generic sensor for a single Flow Power portal metric."""
+
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(
+        self,
+        coordinator: FlowPowerCoordinator,
+        config_entry: ConfigEntry,
+        region: str,
+        sensor_type: str,
+        name: str,
+        data_key: str,
+        unit: str | None,
+        icon: str,
+        source: str,
+    ) -> None:
+        """Initialize the portal sensor."""
+        super().__init__(coordinator, config_entry, region, sensor_type)
+        self._attr_name = name
+        self._attr_native_unit_of_measurement = unit
+        self._attr_icon = icon
+        self._data_key = data_key
+        self._source = source
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the portal metric value."""
+        if self.coordinator.data:
+            fp_data = self.coordinator.data.get("flowpower_data")
+            if fp_data:
+                val = fp_data.get(self._data_key)
+                if val is not None:
+                    return round(val, 4) if isinstance(val, float) else val
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return source and status."""
+        attrs: dict[str, Any] = {"region": self._region, "source": self._source}
+        if self.coordinator.data:
+            fp_data = self.coordinator.data.get("flowpower_data")
+            if fp_data:
+                attrs["status"] = "cached" if fp_data.get("cached") else "live"
+            else:
+                attrs["status"] = "unavailable"
         return attrs
