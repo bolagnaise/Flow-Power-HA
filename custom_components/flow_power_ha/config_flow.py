@@ -30,7 +30,7 @@ from .const import (
     PRICE_SOURCE_FLOWPOWER,
     REGION_NETWORKS,
 )
-from .tariff_utils import get_network_tariff_rate
+from .tariff_utils import get_network_tariff_rate, get_tariff_codes_for_network
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -181,34 +181,16 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_tariff(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle network tariff configuration."""
-        errors: dict[str, str] = {}
-
+        """Handle network (DNSP) selection."""
         if user_input is not None:
             fp_network = user_input.get(CONF_FP_NETWORK, "")
-            fp_tariff_code = user_input.get(CONF_FP_TARIFF_CODE, "")
 
             if not fp_network or fp_network == "skip":
-                # Flat rate mode — skip tariff configuration
                 return await self.async_step_pricing()
 
-            # Validate the tariff code by calling get_network_tariff_rate
-            api_name = NETWORK_API_NAME.get(fp_network)
-            if not api_name:
-                errors["base"] = "invalid_tariff"
-            else:
-                now = datetime.now(timezone.utc)
-                rate = await self.hass.async_add_executor_job(
-                    get_network_tariff_rate, now, api_name, fp_tariff_code
-                )
-                if rate is not None:
-                    self._data[CONF_FP_NETWORK] = fp_network
-                    self._data[CONF_FP_TARIFF_CODE] = fp_tariff_code
-                    return await self.async_step_pricing()
-                else:
-                    errors["base"] = "invalid_tariff"
+            self._data[CONF_FP_NETWORK] = fp_network
+            return await self.async_step_tariff_code()
 
-        # Build network options from REGION_NETWORKS for the selected region
         networks = REGION_NETWORKS.get(self._region, [])
         network_options = [
             selector.SelectOptionDict(value="skip", label="Skip (flat rate)"),
@@ -226,8 +208,56 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
-                vol.Optional(CONF_FP_TARIFF_CODE, default=""): str,
             }),
+        )
+
+    async def async_step_tariff_code(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle tariff code selection with dropdown of available codes."""
+        errors: dict[str, str] = {}
+        fp_network = self._data.get(CONF_FP_NETWORK, "")
+
+        if user_input is not None:
+            fp_tariff_code = user_input.get(CONF_FP_TARIFF_CODE, "")
+            api_name = NETWORK_API_NAME.get(fp_network)
+            if api_name and fp_tariff_code:
+                now = datetime.now(timezone.utc)
+                rate = await self.hass.async_add_executor_job(
+                    get_network_tariff_rate, now, api_name, fp_tariff_code
+                )
+                if rate is not None:
+                    self._data[CONF_FP_TARIFF_CODE] = fp_tariff_code
+                    return await self.async_step_pricing()
+            errors["base"] = "invalid_tariff"
+
+        # Load available tariff codes for the selected network
+        tariff_codes = await self.hass.async_add_executor_job(
+            get_tariff_codes_for_network, fp_network
+        )
+
+        if tariff_codes:
+            code_options = [
+                selector.SelectOptionDict(value=code, label=code)
+                for code in sorted(tariff_codes)
+            ]
+            schema = vol.Schema({
+                vol.Required(CONF_FP_TARIFF_CODE): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=code_options,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+            })
+        else:
+            # Fallback to text input if codes can't be loaded
+            schema = vol.Schema({
+                vol.Required(CONF_FP_TARIFF_CODE): str,
+            })
+
+        return self.async_show_form(
+            step_id="tariff_code",
+            data_schema=schema,
             errors=errors,
         )
 

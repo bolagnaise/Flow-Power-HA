@@ -31,15 +31,20 @@
         }
       },
       "tariff": {
-        "title": "Network Tariff",
-        "description": "Select your electricity distributor and tariff to enable time-of-use pricing. Skip this step to use a flat base rate.",
+        "title": "Electricity Distributor",
+        "description": "Select your electricity distributor to enable time-of-use pricing. Skip to use a flat base rate.",
         "data": {
-          "fp_network": "Electricity Distributor (DNSP)",
-          "fp_tariff_code": "Tariff Code"
+          "fp_network": "Electricity Distributor (DNSP)"
         },
         "data_description": {
-          "fp_network": "Your local electricity network operator",
-          "fp_tariff_code": "Your network tariff code (e.g. EA010, RESELE)"
+          "fp_network": "Your local electricity network operator"
+        }
+      },
+      "tariff_code": {
+        "title": "Tariff Code",
+        "description": "Select your network tariff code.",
+        "data": {
+          "fp_tariff_code": "Tariff Code"
         }
       },
       "pricing": {
