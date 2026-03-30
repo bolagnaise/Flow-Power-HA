@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.4.3
+## v1.4.4
 
 ### Improvement: Auto-Reauth — Only SMS Code Needed
 
