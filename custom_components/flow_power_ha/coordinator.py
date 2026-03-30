@@ -342,60 +342,6 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception as e:
             _LOGGER.error("Flow Power: Error saving session cookies: %s", e)
 
-    async def _fp_auto_reauth(self) -> None:
-        """Automatically re-submit stored credentials when session expires.
-
-        If the portal responds with MFA required, stash the client so the
-        options-flow reauth step can skip straight to the SMS code entry.
-        Falls back to the generic session_expired repair issue on failure.
-        """
-        try:
-            client = FlowPowerPortalClient()
-            result = await client.authenticate(self.fp_email, self.fp_password)
-
-            if result.get("status") == "mfa_required":
-                self.hass.data.setdefault(DOMAIN, {})
-                self.hass.data[DOMAIN]["_pending_mfa_client"] = client
-                self.hass.data[DOMAIN]["_pending_mfa_email"] = self.fp_email
-                self.hass.data[DOMAIN]["_pending_mfa_password"] = self.fp_password
-                # Remove the generic issue and create the MFA-specific one
-                async_delete_issue(self.hass, DOMAIN, "session_expired")
-                if IssueSeverity is not None:
-                    async_create_issue(
-                        self.hass,
-                        DOMAIN,
-                        "session_expired_mfa",
-                        is_fixable=False,
-                        severity=IssueSeverity.WARNING,
-                        translation_key="session_expired_mfa",
-                    )
-                _LOGGER.info(
-                    "Flow Power: Credentials re-submitted automatically — "
-                    "SMS verification required. Complete via Options > Re-authenticate"
-                )
-                return
-
-            _LOGGER.warning(
-                "Flow Power: Auto-reauth got unexpected status: %s",
-                result.get("status"),
-            )
-        except Exception as exc:
-            _LOGGER.warning(
-                "Flow Power: Auto-reauth failed (%s) — raising session_expired issue",
-                exc,
-            )
-
-        # Fallback: raise the generic session_expired issue
-        if IssueSeverity is not None:
-            async_create_issue(
-                self.hass,
-                DOMAIN,
-                "session_expired",
-                is_fixable=False,
-                severity=IssueSeverity.WARNING,
-                translation_key="session_expired",
-            )
-
     async def _save_fp_data_cache(self) -> None:
         """Persist the last known portal data so sensors survive restarts."""
         if not self._fp_data:
@@ -586,18 +532,15 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             backoff = min(30 * (2 ** (self._fp_restore_failures - 1)), 600)
             self._fp_restore_backoff_until = now + backoff
             # Raise repair alert once backoff reaches max (600s)
-            if backoff >= 600:
-                if self.fp_email and self.fp_password:
-                    await self._fp_auto_reauth()
-                elif IssueSeverity is not None:
-                    async_create_issue(
-                        self.hass,
-                        DOMAIN,
-                        "session_expired",
-                        is_fixable=False,
-                        severity=IssueSeverity.WARNING,
-                        translation_key="session_expired",
-                    )
+            if backoff >= 600 and IssueSeverity is not None:
+                async_create_issue(
+                    self.hass,
+                    DOMAIN,
+                    "session_expired",
+                    is_fixable=False,
+                    severity=IssueSeverity.WARNING,
+                    translation_key="session_expired",
+                )
             if self._fp_data:
                 data["flowpower_data"] = self._fp_data
                 _LOGGER.warning(

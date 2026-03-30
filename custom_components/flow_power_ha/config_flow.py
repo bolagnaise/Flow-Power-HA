@@ -401,16 +401,29 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle Flow Power portal authentication/re-authentication."""
-        # Check for auto-reauth client (credentials already submitted, just needs MFA)
-        pending_client = self.hass.data.get(DOMAIN, {}).pop("_pending_mfa_client", None)
-        if pending_client is not None:
-            self._fp_client = pending_client
-            self._fp_email = self.hass.data.get(DOMAIN, {}).pop("_pending_mfa_email", "")
-            self._fp_password = self.hass.data.get(DOMAIN, {}).pop("_pending_mfa_password", "")
-            return await self.async_step_flowpower_mfa()
-
         errors: dict[str, str] = {}
         current = {**self.config_entry.data, **self.config_entry.options}
+
+        # First visit (no user_input) with stored credentials — auto-submit them
+        if user_input is None and current.get(CONF_FLOWPOWER_EMAIL) and current.get(CONF_FLOWPOWER_PASSWORD):
+            email = current[CONF_FLOWPOWER_EMAIL]
+            password = current[CONF_FLOWPOWER_PASSWORD]
+            try:
+                self._fp_client = FlowPowerPortalClient()
+                result = await self._fp_client.authenticate(email, password)
+                if result.get("status") == "mfa_required":
+                    self._fp_email = email
+                    self._fp_password = password
+                    return await self.async_step_flowpower_mfa()
+            except ValueError as e:
+                _LOGGER.error("Flow Power auto-reauth error: %s", e)
+                errors["base"] = "invalid_credentials"
+                self._fp_client = None
+            except Exception as e:
+                _LOGGER.error("Flow Power auto-reauth connection error: %s", e)
+                errors["base"] = "cannot_connect"
+                self._fp_client = None
+            # Fall through to show the credentials form on failure
 
         if user_input is not None:
             email = user_input.get(CONF_FLOWPOWER_EMAIL, current.get(CONF_FLOWPOWER_EMAIL, ""))
