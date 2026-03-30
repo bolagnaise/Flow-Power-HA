@@ -401,6 +401,14 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle Flow Power portal authentication/re-authentication."""
+        # Check for auto-reauth client (credentials already submitted, just needs MFA)
+        pending_client = self.hass.data.get(DOMAIN, {}).pop("_pending_mfa_client", None)
+        if pending_client is not None:
+            self._fp_client = pending_client
+            self._fp_email = self.hass.data.get(DOMAIN, {}).pop("_pending_mfa_email", "")
+            self._fp_password = self.hass.data.get(DOMAIN, {}).pop("_pending_mfa_password", "")
+            return await self.async_step_flowpower_mfa()
+
         errors: dict[str, str] = {}
         current = {**self.config_entry.data, **self.config_entry.options}
 

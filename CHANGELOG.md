@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.4.3
+
+### Improvement: Auto-Reauth — Only SMS Code Needed
+
+When your Flow Power portal session expires, the integration now **automatically re-submits your stored credentials** in the background. You'll only need to enter the SMS verification code — no more re-typing your email and password.
+
+#### What changed
+- **Automatic credential submission** — when the session expires and cookie restore fails, the integration re-authenticates with your saved email/password automatically
+- **MFA-only re-auth flow** — when you go to Configure > Re-authenticate, the credentials step is skipped and you go straight to the SMS code entry
+- **New repair notification** — a specific "SMS verification needed" alert appears instead of the generic "session expired" message, so you know exactly what to do
+
+#### After updating
+No action needed — next time your session expires, you'll see the streamlined MFA-only prompt instead of the full login form.
+
 ## v1.3.1
 
 ### Fix: Portal Session Persistence (Cookie-Based)
