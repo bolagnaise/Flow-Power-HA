@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.5.2
+
+### Fix: Tariff Code Step After Re-authentication
+
+The tariff code step now appears after re-authentication completes, so you don't lose your network/tariff settings when re-authing. Form data from the settings page is preserved through the reauth flow.
+
 ## v1.5.1
 
 ### Improvement: Tariff Code on Separate Page

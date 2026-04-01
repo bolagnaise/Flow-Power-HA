@@ -324,14 +324,17 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
     ) -> FlowResult:
         """Manage the options."""
         if user_input is not None:
+            # Save form data — needed if we branch to reauth then come back
+            wants_reauth = user_input.pop("reauth_flowpower", False) or user_input.pop("connect_flowpower", False)
+            self._options_data = user_input
+
             # Check if user wants to connect/re-authenticate Flow Power portal
-            if user_input.pop("reauth_flowpower", False) or user_input.pop("connect_flowpower", False):
+            if wants_reauth:
                 return await self.async_step_flowpower_reauth()
 
             # If a network is selected, go to tariff code step
             fp_network = user_input.get(CONF_FP_NETWORK, "")
             if fp_network:
-                self._options_data = user_input
                 return await self.async_step_options_tariff_code()
 
             # No network — save directly (clear any old tariff code)
@@ -551,13 +554,16 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
                     # Stash authenticated client for coordinator to pick up
                     self.hass.data.setdefault(DOMAIN, {})
                     self.hass.data[DOMAIN]["_pending_fp_client"] = self._fp_client
-                    # Merge credentials into existing options (don't wipe them)
-                    merged = {
-                        **self.config_entry.options,
-                        CONF_FLOWPOWER_EMAIL: getattr(self, "_fp_email", ""),
-                        CONF_FLOWPOWER_PASSWORD: getattr(self, "_fp_password", ""),
-                    }
-                    return self.async_create_entry(title="", data=merged)
+                    # Merge credentials into saved options data
+                    self._options_data[CONF_FLOWPOWER_EMAIL] = getattr(self, "_fp_email", "")
+                    self._options_data[CONF_FLOWPOWER_PASSWORD] = getattr(self, "_fp_password", "")
+
+                    # Continue to tariff code step if a network is selected
+                    fp_network = self._options_data.get(CONF_FP_NETWORK, "")
+                    if fp_network:
+                        return await self.async_step_options_tariff_code()
+
+                    return self.async_create_entry(title="", data=self._options_data)
                 else:
                     errors["base"] = "invalid_mfa_code"
             except Exception as e:
