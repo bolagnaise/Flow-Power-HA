@@ -1021,7 +1021,11 @@ class FlowPowerPortalClient:
                 "secure": cookie["secure"] or "",
                 "httponly": cookie["httponly"] or "",
             })
-        _LOGGER.debug("Flow Power: Exported %d session cookies", len(cookies))
+        _LOGGER.info(
+            "Flow Power: Exported %d session cookies: %s",
+            len(cookies),
+            ", ".join(f"{c['name']}@{c['domain']}(secure={c['secure']})" for c in cookies),
+        )
         return cookies
 
     def import_session_cookies(self, cookies: list[dict[str, str]]) -> None:
@@ -1045,7 +1049,11 @@ class FlowPowerPortalClient:
             self._session.cookie_jar.update_cookies(
                 morsel, URL(f"https://{domain}/")
             )
-        _LOGGER.debug("Flow Power: Imported %d session cookies", len(cookies))
+        _LOGGER.info(
+            "Flow Power: Imported %d session cookies: %s",
+            len(cookies),
+            ", ".join(f"{c.get('name','?')}@{c.get('domain','?')}" for c in cookies),
+        )
 
     async def restore_session(self) -> bool:
         """Try to restore a session from imported cookies.
@@ -1056,12 +1064,24 @@ class FlowPowerPortalClient:
         Returns True if the session is still valid.
         """
         try:
+            # Log what cookies are in the jar before attempting restore
+            jar_cookies = list(self._session.cookie_jar)
+            _LOGGER.info(
+                "Flow Power: restore_session — jar has %d cookies: %s",
+                len(jar_cookies),
+                ", ".join(f"{c.key}@{c['domain']}" for c in jar_cookies),
+            )
+
             # Try KeepAlive first (lightweight)
             async with self._session.post(
                 f"{FLOWPOWER_BASE_URL}/Account/KeepAlive",
                 timeout=aiohttp.ClientTimeout(total=15),
             ) as resp:
                 body = await resp.text()
+                _LOGGER.info(
+                    "Flow Power: restore KeepAlive status=%s body='%s'",
+                    resp.status, body.strip()[:100],
+                )
                 if body.strip() == "Success":
                     self._authenticated = True
                     self._last_keepalive = time_mod.time()
@@ -1073,12 +1093,16 @@ class FlowPowerPortalClient:
             # Don't follow redirects: if session is dead the server redirects
             # to B2C login, which would pollute the cookie jar with stale
             # B2C artifacts and interfere with future re-authentication.
-            _LOGGER.debug("Flow Power: KeepAlive returned '%s', trying home page", body.strip()[:50])
+            _LOGGER.info("Flow Power: KeepAlive returned '%s', trying home page", body.strip()[:50])
             async with self._session.get(
                 f"{FLOWPOWER_BASE_URL}/Home/Index",
                 timeout=aiohttp.ClientTimeout(total=15),
                 allow_redirects=False,
             ) as resp:
+                _LOGGER.info(
+                    "Flow Power: Home/Index status=%s (302=expired, 200=alive)",
+                    resp.status,
+                )
                 if resp.status == 200:
                     page = await resp.text()
                     if "allmenu" in page or "kWFormBase" in page:

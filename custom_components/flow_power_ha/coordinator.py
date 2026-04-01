@@ -335,10 +335,12 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             cookies = self._fp_client.export_session_cookies()
             if cookies:
                 await self._fp_cookie_store.async_save({"cookies": cookies})
-                _LOGGER.debug(
+                _LOGGER.info(
                     "Flow Power: Saved %d session cookies to persistent storage",
                     len(cookies),
                 )
+            else:
+                _LOGGER.warning("Flow Power: No cookies to save — cookie jar is empty")
         except Exception as e:
             _LOGGER.error("Flow Power: Error saving session cookies: %s", e)
 
