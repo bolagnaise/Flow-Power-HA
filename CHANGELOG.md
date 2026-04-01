@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.5.3
+
+### Fix: Missing Translations for Tariff Code Step
+
+The tariff code step was showing raw field names (`fp_tariff_code`) and no description because `translations/en.json` was out of sync with `strings.json`. Now synced — the tariff step shows the proper title, field label, distributor name, and lookup URL.
+
 ## v1.5.2
 
 ### Fix: Tariff Code Step After Re-authentication

@@ -42,7 +42,7 @@
       },
       "tariff_code": {
         "title": "Tariff Code",
-        "description": "Select your network tariff code.",
+        "description": "Select your {network} tariff code. This is usually listed on your electricity bill under 'tariff' or 'network tariff'. You can also look it up at: {tariff_url}",
         "data": {
           "fp_tariff_code": "Tariff Code"
         }
@@ -84,9 +84,15 @@
           "pea_enabled": "Enable PEA Calculation",
           "pea_custom_value": "Custom PEA Value (c/kWh)",
           "fp_network": "Electricity Distributor (DNSP)",
-          "fp_tariff_code": "Tariff Code",
           "reauth_flowpower": "Re-authenticate with Flow Power portal",
           "connect_flowpower": "Connect Flow Power portal account"
+        }
+      },
+      "options_tariff_code": {
+        "title": "Tariff Code",
+        "description": "Select your {network} tariff code. This is usually listed on your electricity bill under 'tariff' or 'network tariff'. You can also look it up at: {tariff_url}",
+        "data": {
+          "fp_tariff_code": "Tariff Code"
         }
       },
       "flowpower_reauth": {
@@ -110,6 +116,10 @@
     "session_expired": {
       "title": "Flow Power portal session expired",
       "description": "Your Flow Power portal session has expired and account data (PEA, TWAP, LWAP) is no longer updating. Go to **Settings > Devices & Services > Flow Power HA > Configure** and toggle **Re-authenticate with Flow Power portal** to restore your session."
+    },
+    "session_expired_mfa": {
+      "title": "Flow Power session expired — SMS verification needed",
+      "description": "Your Flow Power session expired but credentials were re-submitted automatically. Go to **Settings > Devices & Services > Flow Power HA > Configure** and toggle **Re-authenticate with Flow Power portal** — you'll only need to enter the SMS verification code."
     }
   },
   "entity": {
