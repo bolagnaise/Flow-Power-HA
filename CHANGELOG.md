@@ -1,5 +1,34 @@
 # Changelog
 
+## v1.5.6
+
+### Feature: Import Price History for ApexCharts
+
+The import price sensor now exposes `apex_import_history` — a pre-built `[[epoch_ms, cents], ...]` series for ApexCharts, matching the format of `apex_forecast_import` on the forecast sensor. Keeps up to 48 hours of history.
+
+Example ApexCharts card comparing actual vs forecast:
+```yaml
+type: custom:apexcharts-card
+header:
+  title: Import Price vs Forecast
+series:
+  - entity: sensor.flow_power_qld1_import_price
+    name: Actual Import
+    unit: c/kWh
+    data_generator: |
+      return entity.attributes.apex_import_history;
+  - entity: sensor.flow_power_qld1_price_forecast
+    name: Forecast Import
+    unit: c/kWh
+    data_generator: |
+      return entity.attributes.apex_forecast_import;
+  - entity: sensor.flow_power_qld1_price_forecast
+    name: Wholesale
+    unit: c/kWh
+    data_generator: |
+      return entity.attributes.apex_forecast_wholesale;
+```
+
 ## v1.5.5
 
 ### Fix: Forecast Not Including Network Tariff (TOU Rates)

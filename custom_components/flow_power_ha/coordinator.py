@@ -108,6 +108,9 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_store_save: int | None = None
         self._twap: float | None = None
 
+        # Import price history for ApexCharts: [[epoch_ms, cents], ...]
+        self._import_price_history: list[list[int | float]] = []
+
         # Flow Power portal data
         self._fp_data: dict[str, Any] | None = None
         self._fp_last_fetch: float = 0
@@ -412,6 +415,15 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     data["import_price"] = import_info
                     data["wholesale_price"] = wholesale_cents
                     data["last_update"] = region_data.get("timestamp")
+
+                    # Track import price history for ApexCharts
+                    epoch_ms = int(time_mod.time() * 1000)
+                    price_cents = import_info.get("final_cents")
+                    if price_cents is not None:
+                        self._import_price_history.append([epoch_ms, price_cents])
+                        # Keep 48 hours of history (576 points at 5-min intervals)
+                        if len(self._import_price_history) > 576:
+                            self._import_price_history = self._import_price_history[-576:]
 
                 # Fetch forecast
                 forecast_raw = await self._aemo_client.get_price_forecast(

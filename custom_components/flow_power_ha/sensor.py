@@ -226,6 +226,9 @@ class FlowPowerImportPriceSensor(FlowPowerBaseSensor):
                 else "legacy"
             )
 
+        # Pre-built ApexCharts series: [[epoch_ms, cents], ...]
+        attrs["apex_import_history"] = self.coordinator._import_price_history
+
         return attrs
 
 
