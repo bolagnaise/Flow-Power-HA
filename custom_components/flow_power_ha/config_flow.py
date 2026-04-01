@@ -342,10 +342,18 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
 
         # Build tariff code selector — dropdown if codes available, text fallback
         fp_network = current.get(CONF_FP_NETWORK, "")
+        _LOGGER.info(
+            "Flow Power options: fp_network=%r, config_keys=%s",
+            fp_network, list(current.keys()),
+        )
         tariff_codes = None
         if fp_network:
             tariff_codes = await self.hass.async_add_executor_job(
                 get_tariff_codes_for_network, fp_network
+            )
+            _LOGGER.info(
+                "Flow Power options: loaded %d tariff codes for %s",
+                len(tariff_codes) if tariff_codes else 0, fp_network,
             )
         if tariff_codes:
             tariff_selector = selector.SelectSelector(
