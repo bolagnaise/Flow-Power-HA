@@ -409,6 +409,7 @@ class FlowPowerPortalClient:
             self._owns_session = False
         self._authenticated = False
         self._last_keepalive: float = 0
+        self._cookies_refreshed = False
         # B2C auth state (populated during authenticate())
         self._csrf_token: str | None = None
         self._tx: str | None = None
@@ -853,8 +854,9 @@ class FlowPowerPortalClient:
                 _LOGGER.error("Flow Power: No home report GUID available")
                 return None
 
-        # Keep session alive
-        await self._keep_alive()
+        # Keep session alive — server may refresh cookies (sliding expiration)
+        if await self._keep_alive():
+            self._cookies_refreshed = True
 
         try:
             # Load the Home report page which contains the userObject
@@ -976,11 +978,16 @@ class FlowPowerPortalClient:
             "gst_multiplier": user_obj.get("GST"),
         }
 
-    async def _keep_alive(self) -> None:
-        """Send keepalive to maintain session (every 5 minutes)."""
+    async def _keep_alive(self) -> bool:
+        """Send keepalive to maintain session (every 5 minutes).
+
+        Returns True if keepalive was sent and succeeded (cookies may have
+        been refreshed by the server and should be persisted).
+        Returns False if throttled, failed, or session expired.
+        """
         now = time_mod.time()
         if now - self._last_keepalive < 290:
-            return
+            return False
 
         try:
             async with self._session.post(
@@ -990,11 +997,14 @@ class FlowPowerPortalClient:
                 body = await resp.text()
                 if body.strip() == "Success":
                     self._last_keepalive = now
+                    return True
                 else:
                     _LOGGER.warning("Flow Power: KeepAlive returned: %s", body)
                     self._authenticated = False
+                    return False
         except Exception as e:
             _LOGGER.error("Flow Power: KeepAlive failed: %s", e)
+            return False
 
     def export_session_cookies(self) -> list[dict[str, str]]:
         """Export session cookies for persistent storage.
@@ -1008,6 +1018,8 @@ class FlowPowerPortalClient:
                 "value": cookie.value,
                 "domain": cookie["domain"] or "",
                 "path": cookie["path"] or "/",
+                "secure": cookie["secure"] or "",
+                "httponly": cookie["httponly"] or "",
             })
         _LOGGER.debug("Flow Power: Exported %d session cookies", len(cookies))
         return cookies
@@ -1022,6 +1034,10 @@ class FlowPowerPortalClient:
             morsel[c["name"]] = c["value"]
             morsel[c["name"]]["domain"] = c.get("domain", "")
             morsel[c["name"]]["path"] = c.get("path", "/")
+            if c.get("secure"):
+                morsel[c["name"]]["secure"] = True
+            if c.get("httponly"):
+                morsel[c["name"]]["httponly"] = True
             # Build a URL for the cookie jar to associate the cookie with
             domain = c.get("domain", "").lstrip(".")
             if not domain:
@@ -1054,19 +1070,23 @@ class FlowPowerPortalClient:
                     return True
 
             # KeepAlive failed — try loading the portal home page
+            # Don't follow redirects: if session is dead the server redirects
+            # to B2C login, which would pollute the cookie jar with stale
+            # B2C artifacts and interfere with future re-authentication.
             _LOGGER.debug("Flow Power: KeepAlive returned '%s', trying home page", body.strip()[:50])
             async with self._session.get(
                 f"{FLOWPOWER_BASE_URL}/Home/Index",
                 timeout=aiohttp.ClientTimeout(total=15),
-                allow_redirects=True,
+                allow_redirects=False,
             ) as resp:
-                page = await resp.text()
-                if "allmenu" in page or "kWFormBase" in page:
-                    self._authenticated = True
-                    self._last_keepalive = time_mod.time()
-                    _LOGGER.info("Flow Power: Session restored via home page check")
-                    await self._fetch_menu_guids()
-                    return True
+                if resp.status == 200:
+                    page = await resp.text()
+                    if "allmenu" in page or "kWFormBase" in page:
+                        self._authenticated = True
+                        self._last_keepalive = time_mod.time()
+                        _LOGGER.info("Flow Power: Session restored via home page check")
+                        await self._fetch_menu_guids()
+                        return True
 
             _LOGGER.warning("Flow Power: Stored session cookies expired")
             return False

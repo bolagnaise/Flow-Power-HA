@@ -486,6 +486,13 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
 
         account_data = await self._fp_client.get_account_data()
+
+        # Persist cookies whenever the server may have refreshed them
+        # (keepalive triggers ASP.NET sliding expiration renewal)
+        if self._fp_client._cookies_refreshed:
+            self._fp_client._cookies_refreshed = False
+            await self._save_fp_cookies()
+
         if account_data:
             account_data.pop("cached", None)  # Clear stale flag
             self._fp_data = account_data
@@ -500,7 +507,7 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 account_data.get("pea_actual", 0),
                 account_data.get("lwap", 0),
             )
-            # Keep stored cookies fresh after each successful fetch
+            # Also save cookies and data cache after successful fetch
             await self._save_fp_cookies()
             await self._save_fp_data_cache()
         elif not self._fp_client.is_authenticated:
