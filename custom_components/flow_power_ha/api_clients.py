@@ -995,7 +995,7 @@ class FlowPowerPortalClient:
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
                 body = await resp.text()
-                if body.strip() == "Success":
+                if "Success" in body:
                     self._last_keepalive = now
                     return True
                 else:
@@ -1082,7 +1082,7 @@ class FlowPowerPortalClient:
                     "Flow Power: restore KeepAlive status=%s body='%s'",
                     resp.status, body.strip()[:100],
                 )
-                if body.strip() == "Success":
+                if "Success" in body:
                     self._authenticated = True
                     self._last_keepalive = time_mod.time()
                     _LOGGER.info("Flow Power: Session restored via KeepAlive")

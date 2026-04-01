@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.4.7
+
+### Fix: Session Restore — KeepAlive "Success" String Mismatch
+
+Root cause found: the kWatch server returns `"Success"` (JSON-quoted) but the code compared against `Success` (unquoted). The session was actually alive on every restart — we just rejected it because of the extra quotes. Also affected the ongoing keepalive, meaning every 30-min keepalive was falsely marking the session as expired.
+
 ## v1.4.6
 
 ### Diagnostic: Session Cookie Debugging
