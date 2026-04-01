@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.5.5
+
+### Fix: Forecast Not Including Network Tariff (TOU Rates)
+
+The price forecast was showing raw AEMO wholesale prices without network tariff, causing an inverted pattern (cheap during day, expensive at night) compared to the import price sensor which correctly applied TOU rates.
+
+**Root cause:** AEMO pre-dispatch timestamps use `"2026/04/01 13:30:00"` format (forward slashes), but `datetime.fromisoformat()` only accepts `"2026-04-01T13:30:00"` format (dashes). The timestamp parse silently failed for every forecast period, so no network tariff was ever applied to forecasts.
+
 ## v1.5.4
 
 ### Fix: Energex Tariff URL + Translation Cache

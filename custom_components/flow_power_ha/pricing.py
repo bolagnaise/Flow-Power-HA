@@ -259,7 +259,10 @@ def calculate_forecast_prices(
             timestamp_str = period.get("nemTime") or period.get("startTime") or ""
             if timestamp_str:
                 try:
-                    dt = datetime.fromisoformat(timestamp_str)
+                    # AEMO PERIODID format: "2026/04/01 13:30:00"
+                    # Also handle ISO format: "2026-04-01T13:30:00"
+                    ts = timestamp_str.replace("/", "-")
+                    dt = datetime.fromisoformat(ts)
                     # Half-hour slot: 0-47 (hour * 2 + minute // 30)
                     slot_index = dt.hour * 2 + dt.minute // 30
                     network_tariff_rate = tariff_schedule.get(slot_index)
