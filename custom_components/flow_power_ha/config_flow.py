@@ -335,6 +335,26 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
             for n in networks
         ]
 
+        # Build tariff code selector — dropdown if codes available, text fallback
+        fp_network = current.get(CONF_FP_NETWORK, "")
+        tariff_codes = None
+        if fp_network:
+            tariff_codes = await self.hass.async_add_executor_job(
+                get_tariff_codes_for_network, fp_network
+            )
+        if tariff_codes:
+            tariff_selector = selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[
+                        selector.SelectOptionDict(value=code, label=code)
+                        for code in sorted(tariff_codes)
+                    ],
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            )
+        else:
+            tariff_selector = str
+
         # Build schema - add re-auth option for Flow Power portal users
         schema_fields: dict[Any, Any] = {
             vol.Required(
@@ -377,7 +397,7 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
             vol.Optional(
                 CONF_FP_TARIFF_CODE,
                 description={"suggested_value": current.get(CONF_FP_TARIFF_CODE, "")},
-            ): str,
+            ): tariff_selector,
         }
 
         # Flow Power portal: show connect or re-authenticate option

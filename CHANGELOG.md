@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.4.8
+
+### Fix: Tariff Code Dropdown in Options Flow
+
+The options flow showed a plain text input for tariff code instead of a dropdown. Now loads available tariff codes for the selected network and shows a dropdown selector, matching the initial config flow behavior.
+
 ## v1.4.7
 
 ### Fix: Session Restore — KeepAlive "Success" String Mismatch
