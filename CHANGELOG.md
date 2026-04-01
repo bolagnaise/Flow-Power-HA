@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.4.6
+
+### Diagnostic: Session Cookie Debugging
+
+Added info-level logging to diagnose session loss on restart. Shows cookie names/domains at export, import, and restore so we can see exactly what's in the jar and what the server returns.
+
 ## v1.4.5
 
 ### Fix: Session Dropping Daily
