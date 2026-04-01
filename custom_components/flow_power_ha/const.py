@@ -72,7 +72,7 @@ NETWORK_TARIFF_URL = {
     "Ausgrid": "https://www.ausgrid.com.au/Your-energy-use/Meters/Tariffs-on-your-meter",
     "Endeavour": "https://www.endeavourenergy.com.au/your-energy/understand-your-energy/network-prices",
     "Essential": "https://www.essentialenergy.com.au/our-network/network-pricing",
-    "Energex": "https://www.ergon.com.au/network/network-management/network-tariffs",
+    "Energex": "https://www.energex.com.au/home/our-services/pricing-And-tariffs/residential-tariffs",
     "Ergon": "https://www.ergon.com.au/network/network-management/network-tariffs",
     "SAPN": "https://www.sapowernetworks.com.au/industry/pricing/current-network-prices/",
     "Powercor": "https://www.powercor.com.au/industry/pricing-and-tariffs/network-tariff-rates/",

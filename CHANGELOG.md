@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.5.4
+
+### Fix: Energex Tariff URL + Translation Cache
+
+- Fixed Energex tariff URL — was pointing to Ergon's page, now points to Energex's residential tariffs page
+- If tariff code step shows raw field names after re-auth, restart HA to clear the translation cache
+
 ## v1.5.3
 
 ### Fix: Missing Translations for Tariff Code Step
