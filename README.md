@@ -7,11 +7,13 @@ A Home Assistant integration that provides Flow Power electricity pricing sensor
 - **Price Sources**: Supports AEMO (direct wholesale), Amber Electric, and Flow Power portal login
 - **Flow Power Portal**: Login directly to your Flow Power account to get actual PEA, LWAP, and TWAP values from Flow Power's billing system
 - **Connect Anytime**: Already set up with AEMO or Amber? Connect your Flow Power portal from the integration options — no need to reconfigure
+- **Network Tariff (TOU)**: Select your electricity distributor and tariff code — network charges are applied to both current prices and forecasts
 - **PEA Calculation**: Implements Flow Power's Price Efficiency Adjustment formula
 - **Happy Hour Export**: Automatic export pricing based on Flow Power Happy Hour (5:30pm-7:30pm)
 - **EMHASS Compatible**: Price forecast sensor with attributes for EMHASS integration
 - **Dynamic TWAP**: Auto-calculated 30-day rolling wholesale average for accurate PEA
-- **Configurable**: Base rates and PEA settings
+- **ApexCharts Ready**: Pre-built data series for charting actual vs forecast prices
+- **Configurable**: Base rates, PEA settings, and network tariff configuration
 
 ## Installation
 
@@ -37,6 +39,22 @@ Choose between:
 - **Amber Electric**: Uses your Amber API key for pricing data
 - **Flow Power (Portal login)**: Logs into your Flow Power account at [flowpower.kwatch.com.au](https://flowpower.kwatch.com.au) to fetch actual account data (PEA, LWAP, TWAP, DLF). Uses AEMO for real-time spot prices and forecasts. Requires SMS MFA during setup.
 
+### Network Tariff (TOU Pricing)
+
+Select your electricity distributor (DNSP) and tariff code to include time-of-use network charges in both current prices and forecasts.
+
+**Supported distributors:**
+
+| Region | Distributors |
+|--------|-------------|
+| NSW | Ausgrid, Endeavour, Essential |
+| QLD | Energex, Ergon |
+| VIC | Powercor, CitiPower, AusNet, Jemena, United |
+| SA | SAPN |
+| TAS | TasNetworks |
+
+Your tariff code is listed on your electricity bill under "tariff" or "network tariff". The integration shows a link to your distributor's tariff lookup page during configuration.
+
 ### Flow Power Portal
 
 The Flow Power portal provides **actual account-specific** values directly from Flow Power's billing system, rather than calculated estimates. When connected, the integration uses Flow Power's real TWAP for more accurate PEA calculations across all price sources.
@@ -46,7 +64,8 @@ The Flow Power portal provides **actual account-specific** values directly from 
 1. Select **"Flow Power (Portal login)"** as your price source
 2. Enter your Flow Power portal email and password
 3. Enter the SMS verification code sent to your registered phone number
-4. Select your NEM region and configure pricing
+4. Select your NEM region, distributor, and tariff code
+5. Configure pricing
 
 #### Connect to an existing integration
 
@@ -56,14 +75,15 @@ Already set up with AEMO or Amber? You can connect your Flow Power portal accoun
 2. Toggle **"Connect Flow Power portal account"**
 3. Submit, then enter your portal email and password
 4. Enter the SMS verification code
+5. Select your tariff code
 
 #### Re-authentication
 
-Portal sessions expire over time. If your session expires:
+Portal sessions are persisted across restarts. If your session does expire:
 
 1. Go to **Settings > Devices & Services > Flow Power HA > Configure**
 2. Toggle **"Re-authenticate with Flow Power portal"**
-3. Submit, then re-enter your credentials and SMS code
+3. Submit — your credentials are auto-submitted, you only need the SMS code
 
 The integration continues to work with calculated TWAP while the portal session is expired — re-authenticating simply restores the actual values.
 
@@ -74,17 +94,20 @@ The integration continues to work with calculated TWAP while the portal session 
 | Base Rate | 34.0 c/kWh | Your Flow Power base energy rate (GST inclusive, as per PDS) |
 | PEA Enabled | Yes | Apply Price Efficiency Adjustment |
 | PEA Custom Value | - | Override calculated PEA with fixed value (c/kWh) |
+| Electricity Distributor | - | Your DNSP for network tariff TOU rates |
+| Tariff Code | - | Your network tariff code |
 
 ## Sensors
 
 | Sensor | Unit | Description |
 |--------|------|-------------|
-| `sensor.flow_power_import_price` | $/kWh | Current import price with PEA |
-| `sensor.flow_power_export_price` | $/kWh | Current export price (Happy Hour aware) |
-| `sensor.flow_power_wholesale_price` | c/kWh | Raw wholesale spot price |
-| `sensor.flow_power_price_forecast` | $/kWh | Price forecast for EMHASS |
-| `sensor.flow_power_twap` | c/kWh | 30-day rolling average wholesale price (TWAP) |
-| `sensor.flow_power_account_pea_actual` | c/kWh | Actual PEA from Flow Power portal (portal only) |
+| `sensor.flow_power_<region>_import_price` | $/kWh | Current import price with PEA and network tariff |
+| `sensor.flow_power_<region>_export_price` | $/kWh | Current export price (Happy Hour aware) |
+| `sensor.flow_power_<region>_wholesale_price` | c/kWh | Raw wholesale spot price |
+| `sensor.flow_power_<region>_price_forecast` | $/kWh | Price forecast for EMHASS |
+| `sensor.flow_power_<region>_twap` | c/kWh | 30-day rolling average wholesale price (TWAP) |
+| `sensor.flow_power_<region>_network_tariff` | c/kWh | Current network tariff rate |
+| `sensor.flow_power_<region>_account_pea_actual` | c/kWh | Actual PEA from Flow Power portal (portal only) |
 
 ### Account PEA Sensor Attributes
 
@@ -111,9 +134,42 @@ When the Flow Power portal is connected, the Account PEA sensor exposes these at
 | `avg_import_usage_kw` | 30-day average import demand (kW) |
 | `max_usage_kw` | Maximum demand (kW) |
 
-## Price Forecast Chart
+## Price Charts
 
-The forecast sensor includes pre-built data for charting the full forward price curve (next ~19 hours). Requires [ApexCharts Card](https://github.com/RomRider/apexcharts-card) from HACS.
+### Actual vs Forecast Price Chart
+
+Compare actual import prices against the forecast using [ApexCharts Card](https://github.com/RomRider/apexcharts-card) from HACS.
+
+```yaml
+type: custom:apexcharts-card
+header:
+  title: Actual vs Forecast Price
+  show: true
+graph_span: 24h
+span:
+  start: day
+series:
+  - entity: sensor.flow_power_qld1_import_price
+    data_generator: |
+      return entity.attributes.apex_import_history;
+    name: Actual Import
+    unit: c/kWh
+    color: "#4CAF50"
+  - entity: sensor.flow_power_qld1_price_forecast
+    data_generator: |
+      return entity.attributes.apex_forecast_import;
+    name: Forecast Import
+    unit: c/kWh
+    color: orange
+  - entity: sensor.flow_power_qld1_price_forecast
+    data_generator: |
+      return entity.attributes.apex_forecast_wholesale;
+    name: Wholesale
+    unit: c/kWh
+    color: cyan
+```
+
+### Forecast Only Chart
 
 ```yaml
 type: custom:apexcharts-card
@@ -140,14 +196,17 @@ series:
 
 Replace `qld1` with your region (`nsw1`, `vic1`, `sa1`, `tas1`).
 
-| Attribute | Description |
-|-----------|-------------|
-| `apex_forecast_import` | Full forward curve of import prices in c/kWh (ready for ApexCharts) |
-| `apex_forecast_wholesale` | Full forward curve of wholesale prices in c/kWh |
+### Chart Data Attributes
+
+| Sensor | Attribute | Description |
+|--------|-----------|-------------|
+| Import Price | `apex_import_history` | Historical import prices (up to 48h, `[[epoch_ms, cents], ...]`) |
+| Price Forecast | `apex_forecast_import` | Forward curve of import prices inc. network tariff (c/kWh) |
+| Price Forecast | `apex_forecast_wholesale` | Forward curve of raw wholesale prices (c/kWh) |
 
 ## EMHASS Integration
 
-The `sensor.flow_power_price_forecast` sensor provides attributes compatible with EMHASS:
+The `sensor.flow_power_<region>_price_forecast` sensor provides attributes compatible with EMHASS:
 
 ```yaml
 state: 0.32  # Current price in $/kWh
@@ -172,17 +231,27 @@ emhass:
 
 ### PEA (Price Efficiency Adjustment)
 
+**V2 formula** (with network tariff configured):
+
+```
+PEA = GST × Wholesale + Network Tariff Rate - GST × TWAP - Avg Daily Tariff - BPEA
+Final Rate = Base Rate + PEA
+```
+
+**Legacy formula** (without network tariff):
+
 ```
 PEA = Wholesale - TWAP - BPEA
 Final Rate = Base Rate + PEA
+```
 
 Where:
-- TWAP = 30-day rolling average of wholesale spot prices (dynamic)
-        or actual TWAP from Flow Power portal when connected
+- TWAP = 30-day rolling average of wholesale spot prices (dynamic), or actual TWAP from Flow Power portal when connected
 - BPEA = 1.7 c/kWh (Benchmark Price Efficiency Adjustment)
+- Network Tariff Rate = Time-of-use network charge for the current half-hour period
+- Avg Daily Tariff = 24-hour average of network tariff (nets to zero over a full day)
 - Default Base Rate = 34.0 c/kWh
 - When insufficient data (<1 hour), TWAP defaults to 8.0 c/kWh
-```
 
 ### Export Rates (Happy Hour)
 
