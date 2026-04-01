@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.4.5
+
+### Fix: Session Dropping Daily
+
+Investigated how the kWatch portal keeps Chrome sessions alive for weeks — turns out it's purely cookie-based (no B2C SSO tokens). Found three bugs in how the integration handles session cookies that caused daily session loss.
+
+#### What changed
+- **Cookie flags preserved** — the `.AspNet.Cookies` session cookie has `Secure` and `HttpOnly` flags which were being lost during save/restore, potentially causing aiohttp to not send the cookie correctly
+- **Cookie jar pollution fixed** — when a session was dead, `restore_session()` followed redirects into the B2C login page, polluting the cookie jar with stale artifacts that could interfere with re-authentication
+- **Cookies persisted after keepalive** — ASP.NET sliding expiration renews cookies on each request, but the renewed cookie was only saved to disk every 30 minutes (on data fetch). If HA crashed in between, the refreshed cookie was lost. Now saved immediately after each keepalive
+
+#### After updating
+Re-authenticate once (Options > Re-authenticate Flow Power). Sessions should now survive much longer between re-auths.
+
 ## v1.4.4
 
 ### Improvement: Auto-Reauth — Only SMS Code Needed
