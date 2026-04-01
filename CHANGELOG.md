@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.4.9
+
+### Improvement: Tariff Code Lookup Hints
+
+The tariff code selection step now shows your distributor name and a direct link to their tariff lookup page. Your tariff code is also usually listed on your electricity bill under "tariff" or "network tariff".
+
+Closes #3.
+
 ## v1.4.8
 
 ### Fix: Tariff Code Dropdown in Options Flow

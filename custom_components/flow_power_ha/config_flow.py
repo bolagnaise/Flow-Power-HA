@@ -25,6 +25,7 @@ from .const import (
     DEFAULT_BASE_RATE,
     DOMAIN,
     NETWORK_API_NAME,
+    NETWORK_TARIFF_URL,
     NEM_REGIONS,
     PRICE_SOURCE_AEMO,
     PRICE_SOURCE_FLOWPOWER,
@@ -259,6 +260,10 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="tariff_code",
             data_schema=schema,
             errors=errors,
+            description_placeholders={
+                "network": fp_network,
+                "tariff_url": NETWORK_TARIFF_URL.get(fp_network, "your distributor's website"),
+            },
         )
 
     async def async_step_pricing(

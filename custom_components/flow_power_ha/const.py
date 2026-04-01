@@ -67,6 +67,23 @@ NETWORK_MODULE_NAME = {
     "Evoenergy": "evoenergy",
 }
 
+# Display name → tariff lookup URL for each DNSP
+NETWORK_TARIFF_URL = {
+    "Ausgrid": "https://www.ausgrid.com.au/Your-energy-use/Meters/Tariffs-on-your-meter",
+    "Endeavour": "https://www.endeavourenergy.com.au/your-energy/understand-your-energy/network-prices",
+    "Essential": "https://www.essentialenergy.com.au/our-network/network-pricing",
+    "Energex": "https://www.ergon.com.au/network/network-management/network-tariffs",
+    "Ergon": "https://www.ergon.com.au/network/network-management/network-tariffs",
+    "SAPN": "https://www.sapowernetworks.com.au/industry/pricing/current-network-prices/",
+    "Powercor": "https://www.powercor.com.au/industry/pricing-and-tariffs/network-tariff-rates/",
+    "CitiPower": "https://www.powercor.com.au/industry/pricing-and-tariffs/network-tariff-rates/",
+    "United": "https://www.powercor.com.au/industry/pricing-and-tariffs/network-tariff-rates/",
+    "AusNet": "https://www.ausnetservices.com.au/about/network-prices/electricity-distribution-prices",
+    "Jemena": "https://jemena.com.au/price-and-availability/electricity-prices",
+    "TasNetworks": "https://www.tasnetworks.com.au/config/getattachment/3d6ca9fb-b3d2-464e-9d90-dfe26ae84c8e/tariff-schedule.pdf",
+    "Evoenergy": "https://www.evoenergy.com.au/residents/understanding-electricity-pricing",
+}
+
 # Export Rates by Region (Happy Hour rates in $/kWh)
 FLOW_POWER_EXPORT_RATES = {
     "NSW1": 0.45,  # 45c/kWh
