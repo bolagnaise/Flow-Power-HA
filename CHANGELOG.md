@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.5.0
+
+### Fix: Session Persistence + Tariff Code UX
+
+Combines all session persistence fixes and tariff code improvements:
+
+#### Session fixes (root cause: KeepAlive "Success" string mismatch)
+- Server returns `"Success"` (JSON-quoted) but code checked for `Success` (unquoted) — session was alive but always rejected
+- Cookie secure/httponly flags now preserved across save/restore
+- Dead sessions no longer follow B2C redirects (prevented cookie jar pollution)
+- Cookies persisted to disk after every keepalive (not just every 30-min data fetch)
+
+#### Tariff code improvements
+- Options flow now shows a tariff code dropdown (was plain text input)
+- Tariff selection shows distributor-specific lookup URL and bill hint
+- Hint on distributor field: save after changing to load tariff codes
+
 ## v1.4.9
 
 ### Improvement: Tariff Code Lookup Hints

@@ -89,6 +89,7 @@
           "connect_flowpower": "Connect Flow Power portal account"
         },
         "data_description": {
+          "fp_network": "Save after changing your distributor to load tariff codes",
           "fp_tariff_code": "Your network tariff code — check your electricity bill or your distributor's website"
         }
       },
