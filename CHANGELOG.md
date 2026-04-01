@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.5.1
+
+### Improvement: Tariff Code on Separate Page
+
+The tariff code selection is now a separate step in the options flow. After selecting your distributor and clicking submit, you're taken to a dedicated tariff code page with a dropdown of available codes and a link to your distributor's tariff lookup page.
+
 ## v1.5.0
 
 ### Fix: Session Persistence + Tariff Code UX

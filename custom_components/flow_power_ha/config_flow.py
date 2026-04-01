@@ -317,6 +317,7 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
     def __init__(self) -> None:
         """Initialize the options flow."""
         self._fp_client: FlowPowerPortalClient | None = None
+        self._options_data: dict[str, Any] = {}
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -326,6 +327,15 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
             # Check if user wants to connect/re-authenticate Flow Power portal
             if user_input.pop("reauth_flowpower", False) or user_input.pop("connect_flowpower", False):
                 return await self.async_step_flowpower_reauth()
+
+            # If a network is selected, go to tariff code step
+            fp_network = user_input.get(CONF_FP_NETWORK, "")
+            if fp_network:
+                self._options_data = user_input
+                return await self.async_step_options_tariff_code()
+
+            # No network — save directly (clear any old tariff code)
+            user_input.pop(CONF_FP_TARIFF_CODE, None)
             return self.async_create_entry(title="", data=user_input)
 
         current = {**self.config_entry.data, **self.config_entry.options}
@@ -339,34 +349,6 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
             selector.SelectOptionDict(value=n, label=n)
             for n in networks
         ]
-
-        # Build tariff code selector — dropdown if codes available, text fallback
-        fp_network = current.get(CONF_FP_NETWORK, "")
-        _LOGGER.info(
-            "Flow Power options: fp_network=%r, config_keys=%s",
-            fp_network, list(current.keys()),
-        )
-        tariff_codes = None
-        if fp_network:
-            tariff_codes = await self.hass.async_add_executor_job(
-                get_tariff_codes_for_network, fp_network
-            )
-            _LOGGER.info(
-                "Flow Power options: loaded %d tariff codes for %s",
-                len(tariff_codes) if tariff_codes else 0, fp_network,
-            )
-        if tariff_codes:
-            tariff_selector = selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=[
-                        selector.SelectOptionDict(value=code, label=code)
-                        for code in sorted(tariff_codes)
-                    ],
-                    mode=selector.SelectSelectorMode.DROPDOWN,
-                )
-            )
-        else:
-            tariff_selector = str
 
         # Build schema - add re-auth option for Flow Power portal users
         schema_fields: dict[Any, Any] = {
@@ -407,10 +389,6 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
                     mode=selector.SelectSelectorMode.DROPDOWN,
                 )
             ),
-            vol.Optional(
-                CONF_FP_TARIFF_CODE,
-                description={"suggested_value": current.get(CONF_FP_TARIFF_CODE, "")},
-            ): tariff_selector,
         }
 
         # Flow Power portal: show connect or re-authenticate option
@@ -428,6 +406,67 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(schema_fields),
+        )
+
+    async def async_step_options_tariff_code(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle tariff code selection in options flow."""
+        errors: dict[str, str] = {}
+        fp_network = self._options_data.get(CONF_FP_NETWORK, "")
+
+        if user_input is not None:
+            fp_tariff_code = user_input.get(CONF_FP_TARIFF_CODE, "")
+            api_name = NETWORK_API_NAME.get(fp_network)
+            if api_name and fp_tariff_code:
+                now = datetime.now(timezone.utc)
+                rate = await self.hass.async_add_executor_job(
+                    get_network_tariff_rate, now, api_name, fp_tariff_code
+                )
+                if rate is not None:
+                    self._options_data[CONF_FP_TARIFF_CODE] = fp_tariff_code
+                    return self.async_create_entry(title="", data=self._options_data)
+            errors["base"] = "invalid_tariff"
+
+        # Load available tariff codes for the selected network
+        tariff_codes = await self.hass.async_add_executor_job(
+            get_tariff_codes_for_network, fp_network
+        )
+
+        current = {**self.config_entry.data, **self.config_entry.options}
+
+        if tariff_codes:
+            code_options = [
+                selector.SelectOptionDict(value=code, label=code)
+                for code in sorted(tariff_codes)
+            ]
+            schema = vol.Schema({
+                vol.Required(
+                    CONF_FP_TARIFF_CODE,
+                    default=current.get(CONF_FP_TARIFF_CODE, ""),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=code_options,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+            })
+        else:
+            schema = vol.Schema({
+                vol.Required(
+                    CONF_FP_TARIFF_CODE,
+                    default=current.get(CONF_FP_TARIFF_CODE, ""),
+                ): str,
+            })
+
+        return self.async_show_form(
+            step_id="options_tariff_code",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={
+                "network": fp_network,
+                "tariff_url": NETWORK_TARIFF_URL.get(fp_network, "your distributor's website"),
+            },
         )
 
     async def async_step_flowpower_reauth(

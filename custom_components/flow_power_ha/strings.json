@@ -84,13 +84,15 @@
           "pea_enabled": "Enable PEA Calculation",
           "pea_custom_value": "Custom PEA Value (c/kWh)",
           "fp_network": "Electricity Distributor (DNSP)",
-          "fp_tariff_code": "Tariff Code",
           "reauth_flowpower": "Re-authenticate with Flow Power portal",
           "connect_flowpower": "Connect Flow Power portal account"
-        },
-        "data_description": {
-          "fp_network": "Save after changing your distributor to load tariff codes",
-          "fp_tariff_code": "Your network tariff code — check your electricity bill or your distributor's website"
+        }
+      },
+      "options_tariff_code": {
+        "title": "Tariff Code",
+        "description": "Select your {network} tariff code. This is usually listed on your electricity bill under 'tariff' or 'network tariff'. You can also look it up at: {tariff_url}",
+        "data": {
+          "fp_tariff_code": "Tariff Code"
         }
       },
       "flowpower_reauth": {
