@@ -56,8 +56,16 @@ from .pricing import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# AEMO polling - every 30 seconds for more responsive updates
-AEMO_POLL_SECONDS = [0, 30]  # Poll at :00 and :30 of every minute
+# ---------------------------------------------------------------------------
+# Adaptive polling thresholds (seconds relative to the next 5-minute boundary)
+# ---------------------------------------------------------------------------
+# While waiting for the next boundary the coordinator checks infrequently.
+# Close to the boundary it ramps up so new NEMWEB files are caught quickly.
+_WAIT_INTERVAL = 45       # Poll interval while well away from the boundary (s)
+_PRE_ACTIVE_WINDOW = 10   # Start gentle polling this many seconds before boundary
+_PRE_ACTIVE_INTERVAL = 5  # Poll interval in the pre-active window (s)
+_ACTIVE_WINDOW = 15       # Switch to rapid polling this many seconds after boundary
+_ACTIVE_INTERVAL = 1      # Poll interval during active file search (s)
 
 
 class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -69,7 +77,8 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         config: dict[str, Any],
     ) -> None:
         """Initialize the coordinator."""
-        # Use longer fallback interval - primary updates are clock-aligned
+        # Start with the fallback interval; update_interval is overridden
+        # dynamically by the adaptive polling logic inside _async_update_data.
         super().__init__(
             hass,
             _LOGGER,
@@ -124,19 +133,24 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Persistent portal data cache (survives restarts)
         self._fp_data_store = Store(hass, 1, f"{DOMAIN}.fp_portal_data")
 
-        # Set up clock-aligned polling
+        # ------------------------------------------------------------------
+        # Adaptive polling state
+        # ------------------------------------------------------------------
+        # Datetime of the next expected 5-minute dispatch boundary (naive
+        # local time).  None until we receive the first dispatch timestamp.
+        self._next_boundary: datetime | None = None
+        # Current polling mode label — for log readability only.
+        self._polling_mode: str = "active"  # Start active to get first data fast
+
+        # Set up clock-aligned listeners for non-polling events
         self._setup_time_listeners()
 
-    def _setup_time_listeners(self) -> None:
-        """Set up clock-aligned time listeners for price updates."""
-        # AEMO data updates: Poll every 30 seconds
-        unsub_aemo = async_track_time_change(
-            self.hass,
-            self._handle_aemo_update,
-            second=AEMO_POLL_SECONDS,
-        )
-        self._unsub_time_listeners.append(unsub_aemo)
+    # ------------------------------------------------------------------
+    # Time listeners (Happy Hour + tariff refresh)
+    # ------------------------------------------------------------------
 
+    def _setup_time_listeners(self) -> None:
+        """Set up clock-aligned time listeners for Happy Hour and tariff refresh."""
         # Happy Hour transitions: Update exactly at 17:30:00 and 19:30:00
         unsub_happy_hour = async_track_time_change(
             self.hass,
@@ -158,15 +172,9 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._unsub_time_listeners.append(unsub_tariff)
 
         _LOGGER.info(
-            "Flow Power: Polling enabled - AEMO every 30 seconds, "
-            "Happy Hour at 17:30:00/19:30:00"
+            "Flow Power: Happy Hour listener registered at 17:30/19:30; "
+            "adaptive polling replaces fixed 30-second AEMO timer"
         )
-
-    @callback
-    def _handle_aemo_update(self, now: datetime) -> None:
-        """Handle clock-aligned AEMO update."""
-        _LOGGER.debug("Flow Power: Clock-aligned AEMO update triggered at %s", now)
-        self.hass.async_create_task(self.async_request_refresh())
 
     @callback
     def _handle_happy_hour_update(self, now: datetime) -> None:
@@ -199,14 +207,86 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self.hass.async_create_task(_refresh())
 
+    # ------------------------------------------------------------------
+    # Adaptive polling helpers
+    # ------------------------------------------------------------------
+
+    def _parse_aemo_timestamp(self, timestamp_str: str) -> datetime | None:
+        """Parse AEMO dispatch timestamp (always AEST UTC+10) to naive local datetime."""
+        if not timestamp_str or "/" not in timestamp_str:
+            return None
+        try:
+            from datetime import timezone as _tz, timedelta as _td
+            aest = _tz(_td(hours=10))
+            dt_naive = datetime.strptime(timestamp_str, "%Y/%m/%d %H:%M:%S")
+            dt_aest = dt_naive.replace(tzinfo=aest)
+            return dt_aest.astimezone().replace(tzinfo=None)
+        except (ValueError, TypeError) as e:
+            _LOGGER.debug("Failed to parse dispatch timestamp '%s': %s", timestamp_str, e)
+            return None
+
+    def _calc_next_boundary(self) -> datetime:
+        """Return the next 5-minute wall-clock boundary from now (naive local)."""
+        now = datetime.now()
+        next_min = ((now.minute // 5) + 1) * 5
+        if next_min >= 60:
+            return now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        return now.replace(minute=next_min, second=0, microsecond=0)
+
+    def _adjust_poll_interval(self) -> bool:
+        """Set update_interval based on proximity to the next dispatch boundary.
+
+        Three tiers:
+          WAIT       (>10 s until boundary)  → 45 s intervals, skip NEMWEB fetch
+          PRE-ACTIVE (−10 s … +15 s)         → 5 s intervals, fetch NEMWEB
+          ACTIVE     (>15 s past boundary)   → 1 s intervals, fetch NEMWEB
+
+        Returns True when we should actually hit NEMWEB this cycle, False when
+        we should serve cached data and wait for the boundary.
+        """
+        if self._next_boundary is None:
+            # No boundary known yet — poll now to get first data
+            return True
+
+        now = datetime.now()
+        secs = (self._next_boundary - now).total_seconds()
+
+        if secs > _PRE_ACTIVE_WINDOW:
+            # WAIT mode — too early to expect a new file
+            if self._polling_mode != "wait":
+                self._polling_mode = "wait"
+                _LOGGER.info(
+                    "Flow Power: WAIT mode — next boundary %s in %ds",
+                    self._next_boundary.strftime("%H:%M:%S"),
+                    int(secs),
+                )
+            self.update_interval = timedelta(seconds=_WAIT_INTERVAL)
+            return False
+
+        if secs > -_ACTIVE_WINDOW:
+            # PRE-ACTIVE mode — gently start checking
+            if self._polling_mode != "pre-active":
+                self._polling_mode = "pre-active"
+                _LOGGER.info("Flow Power: PRE-ACTIVE mode (5 s intervals)")
+            self.update_interval = timedelta(seconds=_PRE_ACTIVE_INTERVAL)
+            return True
+
+        # ACTIVE mode — new file could appear any second
+        if self._polling_mode != "active":
+            self._polling_mode = "active"
+            _LOGGER.info("Flow Power: ACTIVE mode (1 s intervals) — searching for new dispatch file")
+        self.update_interval = timedelta(seconds=_ACTIVE_INTERVAL)
+        return True
+
+    # ------------------------------------------------------------------
+    # Setup
+    # ------------------------------------------------------------------
+
     async def _async_setup(self) -> None:
         """Set up the coordinator."""
         self._session = aiohttp.ClientSession()
 
-        if self.price_source == PRICE_SOURCE_AEMO:
-            self._aemo_client = AEMOClient(self._session)
-        elif self.price_source == PRICE_SOURCE_FLOWPOWER:
-            # Flow Power portal uses AEMO for spot prices + portal for account data
+        if self.price_source in (PRICE_SOURCE_AEMO, PRICE_SOURCE_FLOWPOWER):
             self._aemo_client = AEMOClient(self._session)
 
         # Initialise network tariff data if configured
@@ -263,10 +343,8 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if pending and pending.is_authenticated:
             self._fp_client = pending
             _LOGGER.info("Flow Power: Using authenticated portal client from config flow")
-            # Persist session cookies for surviving restarts
             await self._save_fp_cookies()
         elif self.fp_enabled:
-            # Try to restore session from stored cookies
             self._fp_client = FlowPowerPortalClient()
             await self._fp_authenticate()
 
@@ -295,6 +373,10 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._twap,
                 self._get_twap_days(),
             )
+
+    # ------------------------------------------------------------------
+    # Portal authentication helpers (unchanged)
+    # ------------------------------------------------------------------
 
     async def _fp_authenticate(self) -> None:
         """Restore Flow Power portal session from stored cookies."""
@@ -352,14 +434,30 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not self._fp_data:
             return
         try:
-            # Strip the cached flag before saving
             save_data = {k: v for k, v in self._fp_data.items() if k != "cached"}
             await self._fp_data_store.async_save({"data": save_data})
         except Exception as e:
             _LOGGER.error("Flow Power: Error saving portal data cache: %s", e)
 
+    # ------------------------------------------------------------------
+    # Main update loop
+    # ------------------------------------------------------------------
+
     async def _async_update_data(self) -> dict[str, Any]:
-        """Fetch data from API."""
+        """Fetch data from API using adaptive polling.
+
+        Polling strategy:
+        - After receiving a new dispatch file: enter WAIT mode until just
+          before the next 5-minute boundary (45 s check interval).
+        - 10 s before the boundary: switch to PRE-ACTIVE (5 s interval).
+        - 15 s after the boundary: switch to ACTIVE (1 s interval) and poll
+          NEMWEB aggressively until a new file appears.
+        - On new file: immediately return to WAIT mode.
+
+        This mirrors the approach in the standalone AEMO NEMWEB integration
+        and typically catches new dispatch prices within 1-3 s of publication,
+        compared to up to 30 s with the previous fixed-interval approach.
+        """
         if self._session is None:
             await self._async_setup()
 
@@ -378,17 +476,49 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "avg_daily_tariff": self._avg_daily_tariff,
             }
 
-            # Fetch Flow Power portal account data (or serve cached data)
+            # Preserve existing values across polling cycles
+            if self.data:
+                data["import_price"] = self.data.get("import_price")
+                data["wholesale_price"] = self.data.get("wholesale_price")
+                data["forecast"] = self.data.get("forecast", [])
+                data["last_update"] = self.data.get("last_update")
+
+            # Portal account data is independent of NEMWEB dispatch timing —
+            # always check it regardless of polling mode so that the 30-minute
+            # portal refresh window is honoured even during WAIT mode.
             if self.fp_enabled:
                 await self._fetch_flowpower_data(data)
 
+            # Decide whether to hit NEMWEB this cycle.
+            should_fetch = self._adjust_poll_interval()
+
+            if not should_fetch:
+                # Export price is time-based — keep it current even in WAIT mode.
+                data["export_price"] = calculate_export_price(self.region)
+                return data
+
             # Fetch current prices based on source
             if self.price_source in (PRICE_SOURCE_AEMO, PRICE_SOURCE_FLOWPOWER) and self._aemo_client:
-                current_prices = await self._aemo_client.get_current_prices()
+                current_prices, is_new_dispatch, _dispatch_file = (
+                    await self._aemo_client.get_current_prices_with_file()
+                )
                 region_data = current_prices.get(self.region, {})
 
-                if region_data:
+                if is_new_dispatch and region_data:
                     wholesale_cents = region_data.get("price_cents", 0)
+                    timestamp = region_data.get("timestamp")
+
+                    # Advance the boundary for the next cycle
+                    if timestamp:
+                        period_dt = self._parse_aemo_timestamp(timestamp)
+                        if period_dt:
+                            self._next_boundary = self._calc_next_boundary()
+                            _LOGGER.info(
+                                "Flow Power: New dispatch — price=%.2f c/kWh, "
+                                "next boundary %s",
+                                wholesale_cents,
+                                self._next_boundary.strftime("%H:%M:%S"),
+                            )
 
                     # Record wholesale price for TWAP calculation
                     self._record_price(wholesale_cents)
@@ -401,7 +531,6 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     if self._fp_data and self._fp_data.get("twap") is not None:
                         twap_for_calc = self._fp_data["twap"]
 
-                    # Calculate import price with dynamic TWAP
                     import_info = calculate_import_price(
                         wholesale_cents=wholesale_cents,
                         base_rate=self.base_rate,
@@ -414,41 +543,75 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
                     data["import_price"] = import_info
                     data["wholesale_price"] = wholesale_cents
-                    data["last_update"] = region_data.get("timestamp")
+                    data["last_update"] = timestamp
 
                     # Track import price history for ApexCharts
                     epoch_ms = int(time_mod.time() * 1000)
                     price_cents = import_info.get("final_cents")
                     if price_cents is not None:
                         self._import_price_history.append([epoch_ms, price_cents])
-                        # Keep 48 hours of history (576 points at 5-min intervals)
                         if len(self._import_price_history) > 576:
                             self._import_price_history = self._import_price_history[-576:]
 
-                # Fetch forecast
-                forecast_raw = await self._aemo_client.get_price_forecast(
-                    self.region, periods=96
-                )
-                _LOGGER.info("AEMO forecast raw periods: %d for %s", len(forecast_raw) if forecast_raw else 0, self.region)
-
-                # Use portal TWAP for forecast calculations too
-                twap_for_forecast = self._twap
-                if self._fp_data and self._fp_data.get("twap") is not None:
-                    twap_for_forecast = self._fp_data["twap"]
-
-                if forecast_raw:
-                    data["forecast"] = calculate_forecast_prices(
-                        forecast_raw,
-                        base_rate=self.base_rate,
-                        pea_enabled=self.pea_enabled,
-                        pea_custom_value=self.pea_custom_value,
-                        twap=twap_for_forecast,
-                        tariff_schedule=self._tariff_schedule,
-                        avg_daily_tariff=self._avg_daily_tariff,
+                    # Fetch forecast — gated on new dispatch so we don't hammer
+                    # the predispatch endpoint every second during ACTIVE mode.
+                    # The predispatch file itself only updates every ~30 minutes
+                    # so the filename cache in AEMOClient handles deduplication.
+                    twap_for_forecast = twap_for_calc
+                    forecast_raw, _is_new_pd, _pd_file = (
+                        await self._aemo_client.get_price_forecast_with_file(
+                            self.region, periods=96
+                        )
                     )
-                    _LOGGER.info("Calculated forecast periods: %d", len(data["forecast"]))
+                    _LOGGER.info(
+                        "AEMO forecast raw periods: %d for %s",
+                        len(forecast_raw) if forecast_raw else 0,
+                        self.region,
+                    )
 
-            # Calculate export price (always based on region and time)
+                    if forecast_raw:
+                        data["forecast"] = calculate_forecast_prices(
+                            forecast_raw,
+                            base_rate=self.base_rate,
+                            pea_enabled=self.pea_enabled,
+                            pea_custom_value=self.pea_custom_value,
+                            twap=twap_for_forecast,
+                            tariff_schedule=self._tariff_schedule,
+                            avg_daily_tariff=self._avg_daily_tariff,
+                        )
+                        _LOGGER.info("Calculated forecast periods: %d", len(data["forecast"]))
+
+                elif not is_new_dispatch and self._next_boundary is None and region_data:
+                    # First run — file already cached but we still need a boundary.
+                    # Only set it if we are not already past the next 5-minute mark;
+                    # if we are, stay in ACTIVE mode so we immediately poll for the
+                    # new file rather than sleeping until a boundary that has passed.
+                    timestamp = region_data.get("timestamp")
+                    if timestamp:
+                        period_dt = self._parse_aemo_timestamp(timestamp)
+                        if period_dt:
+                            candidate = self._calc_next_boundary()
+                            secs_until = (candidate - datetime.now()).total_seconds()
+                            if secs_until > -_ACTIVE_WINDOW:
+                                # Boundary is still in the future (or only just past) —
+                                # safe to set; the tier logic will pick the right mode.
+                                self._next_boundary = candidate
+                                _LOGGER.info(
+                                    "Flow Power: Boundary initialised from cached dispatch: "
+                                    "next=%s (in %.0fs)",
+                                    self._next_boundary.strftime("%H:%M:%S"),
+                                    secs_until,
+                                )
+                            else:
+                                # We are well past the boundary — stay in ACTIVE mode
+                                # so we keep polling for the file that's already due.
+                                _LOGGER.info(
+                                    "Flow Power: Cached dispatch boundary already passed "
+                                    "(%.0fs ago) — staying in ACTIVE mode",
+                                    -secs_until,
+                                )
+
+            # Export price is always recalculated (time-based)
             data["export_price"] = calculate_export_price(self.region)
 
             return data
@@ -457,6 +620,10 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.error("Error fetching Flow Power data: %s", err)
             raise UpdateFailed(f"Error fetching data: {err}") from err
 
+    # ------------------------------------------------------------------
+    # Portal data fetch (unchanged)
+    # ------------------------------------------------------------------
+
     async def _check_pending_fp_client(self) -> bool:
         """Check for a freshly authenticated client from reauth flow.
 
@@ -464,14 +631,12 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         pending = self.hass.data.get(DOMAIN, {}).pop("_pending_fp_client", None)
         if pending and pending.is_authenticated:
-            # Close the old client's session to avoid "Unclosed client session"
             if self._fp_client:
                 await self._fp_client.close()
             self._fp_client = pending
             self._fp_auth_failed = False
             self._fp_restore_failures = 0
             self._fp_restore_backoff_until = 0
-            # Clear the reauth repair alert
             async_delete_issue(self.hass, DOMAIN, "session_expired")
             _LOGGER.info("Flow Power: Picked up authenticated client from reauth flow")
             return True
@@ -483,32 +648,27 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Updates self._fp_data and data["flowpower_data"] on success.
         Only fetches every UPDATE_INTERVAL_FLOWPOWER seconds.
         """
-        # Always check for a freshly authenticated client from reauth
         if await self._check_pending_fp_client():
             await self._save_fp_cookies()
 
         if not self._fp_client:
-            # Still serve cached data even without a client
             if self._fp_data:
                 data["flowpower_data"] = self._fp_data
             return
 
         now = time_mod.time()
         if now - self._fp_last_fetch < UPDATE_INTERVAL_FLOWPOWER and self._fp_data:
-            # Use cached data
             data["flowpower_data"] = self._fp_data
             return
 
         account_data = await self._fp_client.get_account_data()
 
-        # Persist cookies whenever the server may have refreshed them
-        # (keepalive triggers ASP.NET sliding expiration renewal)
         if self._fp_client._cookies_refreshed:
             self._fp_client._cookies_refreshed = False
             await self._save_fp_cookies()
 
         if account_data:
-            account_data.pop("cached", None)  # Clear stale flag
+            account_data.pop("cached", None)
             self._fp_data = account_data
             self._fp_last_fetch = now
             data["flowpower_data"] = account_data
@@ -521,13 +681,10 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 account_data.get("pea_actual", 0),
                 account_data.get("lwap", 0),
             )
-            # Also save cookies and data cache after successful fetch
             await self._save_fp_cookies()
             await self._save_fp_data_cache()
         elif not self._fp_client.is_authenticated:
-            # Session expired — try restoring (with backoff)
             if now < self._fp_restore_backoff_until:
-                # In backoff period — use cached data or stay silent
                 if self._fp_data:
                     data["flowpower_data"] = self._fp_data
                 return
@@ -538,7 +695,6 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._fp_restore_backoff_until = 0
                 async_delete_issue(self.hass, DOMAIN, "session_expired")
                 await self._save_fp_cookies()
-                # Retry the fetch with restored session
                 account_data = await self._fp_client.get_account_data()
                 if account_data:
                     account_data.pop("cached", None)
@@ -548,11 +704,9 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     _LOGGER.info("Flow Power: Account data fetched after session restore")
                     await self._save_fp_data_cache()
                     return
-            # Restore failed — apply exponential backoff (30s, 60s, 120s, ... max 10min)
             self._fp_restore_failures += 1
             backoff = min(30 * (2 ** (self._fp_restore_failures - 1)), 600)
             self._fp_restore_backoff_until = now + backoff
-            # Raise repair alert once backoff reaches max (600s)
             if backoff >= 600 and IssueSeverity is not None:
                 async_create_issue(
                     self.hass,
@@ -576,11 +730,14 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     backoff,
                 )
         elif self._fp_data:
-            # Use stale cached data
             data["flowpower_data"] = self._fp_data
             _LOGGER.warning("Flow Power: Using cached portal data (fetch failed)")
         else:
             _LOGGER.warning("Flow Power: No portal data available")
+
+    # ------------------------------------------------------------------
+    # TWAP helpers (unchanged)
+    # ------------------------------------------------------------------
 
     def _record_price(self, wholesale_cents: float) -> None:
         """Record a wholesale price sample for TWAP calculation."""
@@ -640,6 +797,10 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             })
         except Exception as e:
             _LOGGER.error("Error saving price history: %s", e)
+
+    # ------------------------------------------------------------------
+    # Shutdown
+    # ------------------------------------------------------------------
 
     async def async_shutdown(self) -> None:
         """Shutdown the coordinator."""

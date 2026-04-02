@@ -51,18 +51,32 @@ class AEMOClient:
         self._forecast_cache: dict[str, Any] = {}
         self._forecast_cache_time: datetime | None = None
         self._last_dispatch_file: str | None = None
+        self._dispatch_cache: dict[str, Any] = {}  # filename → parsed prices
+        self._last_predispatch_file: str | None = None
 
     async def get_current_prices(self) -> dict[str, dict[str, Any]]:
         """Fetch current 5-minute dispatch prices for all NEM regions.
 
-        Uses NEMWEB dispatch ZIP files for faster updates.
+        Thin wrapper around get_current_prices_with_file for callers that
+        don't need to know whether the data is fresh or cached.
+        """
+        prices, _is_new, _file = await self.get_current_prices_with_file()
+        return prices
+
+    async def get_current_prices_with_file(
+        self,
+    ) -> tuple[dict[str, dict[str, Any]], bool, str]:
+        """Fetch current dispatch prices, reporting whether a new file was found.
+
+        Uses NEMWEB dispatch ZIP files for faster updates.  The parsed result
+        is cached by filename so repeated calls within the same 5-minute
+        dispatch period never re-download or re-parse the ZIP.
 
         Returns:
-            Dict mapping region code to price data:
-            {
-                'NSW1': {'price': 72.06, 'timestamp': '...', 'demand': 8500},
-                ...
-            }
+            (prices, is_new_file, filename)
+            prices       – dict mapping region code → price data
+            is_new_file  – True when the file on NEMWEB changed since last call
+            filename     – the filename that was used (empty string on error)
         """
         try:
             # Get directory listing to find latest dispatch file
@@ -72,7 +86,7 @@ class AEMOClient:
             ) as response:
                 if response.status != 200:
                     _LOGGER.error("NEMWEB dispatch listing returned status %s", response.status)
-                    return await self._get_current_prices_fallback()
+                    return await self._get_current_prices_fallback(), False, ""
 
                 html = await response.text()
 
@@ -83,15 +97,15 @@ class AEMOClient:
 
             if not matches:
                 _LOGGER.warning("No dispatch files found, using fallback API")
-                return await self._get_current_prices_fallback()
+                return await self._get_current_prices_fallback(), False, ""
 
             # Get the latest file (sorted by timestamp and sequence)
             latest_file = sorted(matches)[-1]
 
-            # Skip if we already processed this file
-            if latest_file == self._last_dispatch_file:
+            # Return cached parse result if the file hasn't changed
+            if latest_file in self._dispatch_cache:
                 _LOGGER.debug("Dispatch file unchanged: %s", latest_file)
-                # Still need to return current data - fall through to download
+                return self._dispatch_cache[latest_file], False, latest_file
 
             file_url = f"{AEMO_DISPATCH_URL}{latest_file}"
 
@@ -102,26 +116,28 @@ class AEMOClient:
             ) as response:
                 if response.status != 200:
                     _LOGGER.error("Failed to download dispatch file: %s", response.status)
-                    return await self._get_current_prices_fallback()
+                    return await self._get_current_prices_fallback(), False, ""
 
                 content = await response.read()
 
-            self._last_dispatch_file = latest_file
             prices = self._parse_dispatch_zip(content)
 
             if prices:
                 _LOGGER.debug("NEMWEB dispatch: %s -> %d regions", latest_file, len(prices))
-                return prices
+                # Cache the result and evict any previous entry (only keep latest)
+                self._dispatch_cache = {latest_file: prices}
+                self._last_dispatch_file = latest_file
+                return prices, True, latest_file
             else:
                 _LOGGER.warning("No prices parsed from dispatch file")
-                return await self._get_current_prices_fallback()
+                return await self._get_current_prices_fallback(), False, ""
 
         except asyncio.TimeoutError:
             _LOGGER.error("Timeout fetching NEMWEB dispatch")
-            return await self._get_current_prices_fallback()
+            return await self._get_current_prices_fallback(), False, ""
         except Exception as e:
             _LOGGER.error("Error fetching NEMWEB dispatch: %s", e)
-            return await self._get_current_prices_fallback()
+            return await self._get_current_prices_fallback(), False, ""
 
     def _parse_dispatch_zip(self, content: bytes) -> dict[str, dict[str, Any]]:
         """Parse dispatch ZIP file and extract price data.
@@ -222,18 +238,29 @@ class AEMOClient:
     ) -> list[dict[str, Any]]:
         """Fetch pre-dispatch price forecast for a region.
 
+        Thin wrapper around get_price_forecast_with_file for callers that
+        don't need the filename.
+        """
+        forecasts, _is_new, _file = await self.get_price_forecast_with_file(region, periods)
+        return forecasts
+
+    async def get_price_forecast_with_file(
+        self, region: str, periods: int = 48
+    ) -> tuple[list[dict[str, Any]], bool, str]:
+        """Fetch pre-dispatch price forecast, reporting whether a new file was found.
+
         Args:
             region: NEM region code (NSW1, QLD1, VIC1, SA1, TAS1)
             periods: Number of 30-minute periods to return (default 48 = 24 hours)
 
         Returns:
-            List of forecast periods in Amber-compatible format:
-            [
-                {'nemTime': '...', 'perKwh': 25.5, 'wholesaleKWHPrice': 0.255},
-                ...
-            ]
+            (forecasts, is_new_file, filename)
+            forecasts    – list of forecast periods in Amber-compatible format
+            is_new_file  – True when the predispatch file changed since last call
+            filename     – the filename that was used (empty string on error)
         """
-        # Check cache (update every 30 minutes)
+        # Check time-based cache (update every 30 minutes) – kept for
+        # callers that use get_price_forecast() directly.
         now = datetime.now(ZoneInfo("Australia/Sydney"))
         if (
             self._forecast_cache_time
@@ -241,31 +268,37 @@ class AEMOClient:
             and region in self._forecast_cache
         ):
             cached = self._forecast_cache.get(region, [])
-            return cached[:periods] if cached else []
+            return (cached[:periods] if cached else []), False, self._last_predispatch_file or ""
 
         try:
             # Fetch from NEMWeb pre-dispatch reports (ZIP files)
-            forecast_data = await self._fetch_predispatch_report(region)
+            forecast_data, is_new, filename = await self._fetch_predispatch_report_with_file(region)
 
             if forecast_data:
                 self._forecast_cache[region] = forecast_data
                 self._forecast_cache_time = now
                 _LOGGER.info("Cached %d forecast periods for %s", len(forecast_data), region)
-                return forecast_data[:periods]
+                return forecast_data[:periods], is_new, filename
             else:
                 _LOGGER.warning("No forecast data returned for %s", region)
-                # Don't cache empty results - try again next time
-                return []
+                return [], False, ""
 
         except Exception as e:
             _LOGGER.error("Error fetching AEMO forecast: %s", e)
             cached = self._forecast_cache.get(region, [])
             if cached:
                 _LOGGER.info("Returning %d cached forecast periods for %s", len(cached), region)
-            return cached[:periods]
+            return (cached[:periods] if cached else []), False, self._last_predispatch_file or ""
 
     async def _fetch_predispatch_report(self, region: str) -> list[dict[str, Any]]:
         """Fetch and parse AEMO pre-dispatch report from ZIP files."""
+        forecasts, _is_new, _file = await self._fetch_predispatch_report_with_file(region)
+        return forecasts
+
+    async def _fetch_predispatch_report_with_file(
+        self, region: str
+    ) -> tuple[list[dict[str, Any]], bool, str]:
+        """Fetch pre-dispatch report, returning (forecasts, is_new_file, filename)."""
         _LOGGER.info("Fetching AEMO pre-dispatch report for %s", region)
         try:
             # Get directory listing to find latest report
@@ -275,7 +308,7 @@ class AEMOClient:
             ) as response:
                 if response.status != 200:
                     _LOGGER.error("Failed to list AEMO reports: %s", response.status)
-                    return []
+                    return [], False, ""
 
                 html = await response.text()
 
@@ -289,10 +322,17 @@ class AEMOClient:
 
             if not matches:
                 _LOGGER.warning("No pre-dispatch reports found")
-                return []
+                return [], False, ""
 
             # Get the latest file
             latest_file = sorted(matches)[-1]
+
+            # Skip download if we already have this file parsed
+            is_new_file = latest_file != self._last_predispatch_file
+            if not is_new_file and self._forecast_cache.get(region):
+                _LOGGER.debug("Predispatch file unchanged: %s", latest_file)
+                return self._forecast_cache[region], False, latest_file
+
             file_url = f"{AEMO_FORECAST_BASE_URL}{latest_file}"
 
             # Download and parse the ZIP file
@@ -302,16 +342,18 @@ class AEMOClient:
             ) as response:
                 if response.status != 200:
                     _LOGGER.error("Failed to download report: %s", response.status)
-                    return []
+                    return [], False, ""
 
                 content = await response.read()
 
+            self._last_predispatch_file = latest_file
             # Extract and parse CSV from ZIP
-            return self._parse_predispatch_zip(content, region)
+            forecasts = self._parse_predispatch_zip(content, region)
+            return forecasts, True, latest_file
 
         except Exception as e:
             _LOGGER.error("Error fetching pre-dispatch report: %s", e)
-            return []
+            return [], False, ""
 
     def _parse_predispatch_zip(
         self, content: bytes, region: str
