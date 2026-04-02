@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.6.0
+
+### Feature: Adaptive AEMO Polling (PR #5 by @pvandenh)
+
+Replaces the fixed 30-second AEMO polling timer with a 3-tier adaptive strategy that catches new wholesale prices within 1-3 seconds of publication on NEMWEB.
+
+#### Polling tiers
+- **WAIT** (45s interval) — well before the next 5-minute dispatch boundary, skips NEMWEB entirely
+- **PRE-ACTIVE** (5s interval) — 10 seconds before the boundary, starts gentle polling
+- **ACTIVE** (1s interval) — 15 seconds after the boundary, polls aggressively until the new dispatch file appears
+
+#### Other improvements
+- Dispatch file results cached by filename — no redundant ZIP downloads during ACTIVE mode
+- Forecast fetch gated on new dispatch — predispatch endpoint never polled at 1s intervals
+- Portal fetch moved outside WAIT gate — 30-minute portal refresh honoured during WAIT mode
+- Boundary initialization guard prevents premature WAIT mode on startup
+
 ## v1.5.6
 
 ### Feature: Import Price History for ApexCharts
