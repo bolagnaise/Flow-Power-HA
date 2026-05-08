@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.6.1
+
+### Fix: Use Raw Wholesale TWAP for PEA Calculations
+
+When the Flow Power portal is connected, import price and forecast calculations now keep using the integration's rolling raw wholesale TWAP instead of substituting the portal account TWAP. The portal TWAP remains available on account sensors, but it is not the correct input for the PEA formula and could make import prices read too low.
+
+Also updates the `aemo-to-tariff` dependency to `0.7.15`, which includes Endeavour Energy N73 tariff support from upstream.
+
+Closes #4 and #9.
+
 ## v1.6.0
 
 ### Feature: Adaptive AEMO Polling (PR #5 by @pvandenh)
@@ -180,7 +190,7 @@ You can now log in directly to your Flow Power account to get **actual pricing d
 #### What's new
 - **New price source: "Flow Power (Portal login)"** — authenticates to your Flow Power account at [flowpower.kwatch.com.au](https://flowpower.kwatch.com.au) via email + SMS verification
 - **New sensor: Account PEA (Actual)** — shows your real PEA value from Flow Power, with attributes for LWAP, TWAP, average RRP, DLF (site losses), and more
-- **More accurate PEA calculations** — when using portal login, the integration uses Flow Power's actual TWAP instead of a self-calculated rolling average for all price calculations
+- **Portal account metrics** — exposes Flow Power's actual account TWAP values in sensors. Note: v1.6.1 corrected import and forecast calculations to use the raw wholesale rolling TWAP required by the PEA formula.
 - **Re-authentication** — if your portal session expires, use the options flow to re-authenticate without removing the integration
 
 #### How it works

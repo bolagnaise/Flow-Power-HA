@@ -57,7 +57,7 @@ Your tariff code is listed on your electricity bill under "tariff" or "network t
 
 ### Flow Power Portal
 
-The Flow Power portal provides **actual account-specific** values directly from Flow Power's billing system, rather than calculated estimates. When connected, the integration uses Flow Power's real TWAP for more accurate PEA calculations across all price sources.
+The Flow Power portal provides **actual account-specific** values directly from Flow Power's billing system, rather than calculated estimates. Portal metrics are exposed through the account sensors. Import price and forecast PEA calculations continue to use the integration's rolling raw wholesale TWAP, because the portal TWAP is an account metric and may include customer/network effects.
 
 #### Setup during initial configuration
 
@@ -246,7 +246,7 @@ Final Rate = Base Rate + PEA
 ```
 
 Where:
-- TWAP = 30-day rolling average of wholesale spot prices (dynamic), or actual TWAP from Flow Power portal when connected
+- TWAP = 30-day rolling average of raw wholesale spot prices (dynamic)
 - BPEA = 1.7 c/kWh (Benchmark Price Efficiency Adjustment)
 - Network Tariff Rate = Time-of-use network charge for the current half-hour period
 - Avg Daily Tariff = 24-hour average of network tariff (nets to zero over a full day)

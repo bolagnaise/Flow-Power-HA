@@ -526,10 +526,9 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     data["twap_days"] = self._get_twap_days()
                     data["twap_samples"] = len(self._price_history)
 
-                    # Use Flow Power portal TWAP if available (more accurate)
+                    # PEA requires the raw wholesale TWAP. Portal TWAP is an
+                    # account metric and can include customer/network effects.
                     twap_for_calc = self._twap
-                    if self._fp_data and self._fp_data.get("twap") is not None:
-                        twap_for_calc = self._fp_data["twap"]
 
                     import_info = calculate_import_price(
                         wholesale_cents=wholesale_cents,
