@@ -6,7 +6,7 @@ with support for both Amber Electric and AEMO (direct wholesale) price sources.
 Features:
 - PEA (Price Efficiency Adjustment) calculation
 - Happy Hour export pricing
-- Price forecasts for EMHASS integration
+- Price forecasts for EMHASS and HAEO integrations
 - Configurable network tariffs and fees
 """
 from __future__ import annotations

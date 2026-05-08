@@ -1,6 +1,6 @@
 # Flow Power HA
 
-A Home Assistant integration that provides Flow Power electricity pricing sensors for EMHASS optimization.
+A Home Assistant integration for Flow Power electricity pricing sensors, compatible with EMHASS and HAEO.
 
 ## Features
 
@@ -10,7 +10,7 @@ A Home Assistant integration that provides Flow Power electricity pricing sensor
 - **Network Tariff (TOU)**: Select your electricity distributor and tariff code — network charges are applied to both current prices and forecasts
 - **PEA Calculation**: Implements Flow Power's Price Efficiency Adjustment formula
 - **Happy Hour Export**: Automatic export pricing based on Flow Power Happy Hour (5:30pm-7:30pm)
-- **EMHASS Compatible**: Price forecast sensor with attributes for EMHASS integration
+- **Optimizer Compatible**: Price forecast sensor with attributes for EMHASS and HAEO
 - **Dynamic TWAP**: Auto-calculated 30-day rolling wholesale average for accurate PEA
 - **ApexCharts Ready**: Pre-built data series for charting actual vs forecast prices
 - **Configurable**: Base rates, PEA settings, and network tariff configuration
@@ -104,7 +104,7 @@ The integration continues to work with calculated TWAP while the portal session 
 | `sensor.flow_power_<region>_import_price` | $/kWh | Current import price with PEA and network tariff |
 | `sensor.flow_power_<region>_export_price` | $/kWh | Current export price (Happy Hour aware) |
 | `sensor.flow_power_<region>_wholesale_price` | c/kWh | Raw wholesale spot price |
-| `sensor.flow_power_<region>_price_forecast` | $/kWh | Price forecast for EMHASS |
+| `sensor.flow_power_<region>_price_forecast` | $/kWh | Price forecast for EMHASS and HAEO |
 | `sensor.flow_power_<region>_twap` | c/kWh | 30-day rolling average wholesale price (TWAP) |
 | `sensor.flow_power_<region>_network_tariff` | c/kWh | Current network tariff rate |
 | `sensor.flow_power_<region>_account_pea_actual` | c/kWh | Actual PEA from Flow Power portal (portal only) |
@@ -204,9 +204,9 @@ Replace `qld1` with your region (`nsw1`, `vic1`, `sa1`, `tas1`).
 | Price Forecast | `apex_forecast_import` | Forward curve of import prices inc. network tariff (c/kWh) |
 | Price Forecast | `apex_forecast_wholesale` | Forward curve of raw wholesale prices (c/kWh) |
 
-## EMHASS Integration
+## Optimizer Integration
 
-The `sensor.flow_power_<region>_price_forecast` sensor provides attributes compatible with EMHASS:
+The `sensor.flow_power_<region>_price_forecast` sensor provides forecast attributes compatible with EMHASS and HAEO:
 
 ```yaml
 state: 0.32  # Current price in $/kWh
