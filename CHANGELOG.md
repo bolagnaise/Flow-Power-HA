@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.6.2
+
+### Fix: Network Tariff Timing and Import Price Refresh
+
+- Network tariff lookup now uses the NEM dispatch interval end, matching how AEMO dispatch periods are labelled.
+- Import price now updates immediately when the network tariff refresh changes, instead of waiting for the next AEMO dispatch fetch.
+- Import price attributes now expose `network_tou_adjustment_cents` and `price_without_network_tou_adjustment_cents`, so app-vs-sensor differences can be traced directly.
+- Network tariff and portal account sensors now round noisy decimal values for cleaner dashboards.
+
 ## v1.6.1
 
 ### Fix: Use Raw Wholesale TWAP for PEA Calculations

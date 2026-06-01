@@ -112,6 +112,9 @@ def calculate_import_price(
         "twap_used": twap_used,
         "network_tariff_rate": network_tariff_rate,
         "avg_daily_tariff": avg_daily_tariff,
+        "network_tou_adjustment": None,
+        "price_without_network_tou_adjustment_cents": None,
+        "price_without_network_tou_adjustment_dollars": None,
         "final_cents": 0.0,
         "final_dollars": 0.0,
     }
@@ -129,13 +132,24 @@ def calculate_import_price(
             )
 
         result["pea"] = pea
-        final_cents = base_rate + pea
+        raw_final_cents = base_rate + pea
     else:
         # Just base rate
-        final_cents = base_rate
+        raw_final_cents = base_rate
+
+    if network_tariff_rate is not None and avg_daily_tariff is not None:
+        network_tou_adjustment = network_tariff_rate - avg_daily_tariff
+        result["network_tou_adjustment"] = round(network_tou_adjustment, 4)
+        without_network_tou = max(0.0, raw_final_cents - network_tou_adjustment)
+        result["price_without_network_tou_adjustment_cents"] = round(
+            without_network_tou, 2
+        )
+        result["price_without_network_tou_adjustment_dollars"] = round(
+            without_network_tou / 100, 4
+        )
 
     # Ensure non-negative (Tesla restriction)
-    final_cents = max(0.0, final_cents)
+    final_cents = max(0.0, raw_final_cents)
 
     result["final_cents"] = round(final_cents, 2)
     result["final_dollars"] = round(final_cents / 100, 4)

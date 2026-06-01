@@ -253,6 +253,14 @@ Where:
 - Default Base Rate = 34.0 c/kWh
 - When insufficient data (<1 hour), TWAP defaults to 8.0 c/kWh
 
+The import price sensor includes the current network time-of-use swing used by the PEA formula:
+
+```
+Network TOU adjustment = Network Tariff Rate - Avg Daily Tariff
+```
+
+If the Flow Power app's **Price of energy** differs by roughly this amount, compare it with the sensor attributes `network_tou_adjustment_cents` and `price_without_network_tou_adjustment_cents`. The app display can omit or smooth the current network TOU adjustment, while the import price sensor is the current complete import estimate used for automation.
+
 ### Export Rates (Happy Hour)
 
 | Region | Happy Hour Rate |

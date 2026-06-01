@@ -27,6 +27,18 @@ def _suppress_stdout():
         sys.stdout = old_stdout
 
 
+def _dispatch_interval_end(dt: datetime) -> datetime:
+    """Return the NEM dispatch interval end for a wall-clock timestamp."""
+    interval_seconds = 5 * 60
+    seconds_since_boundary = (dt.minute % 5) * 60 + dt.second
+    if seconds_since_boundary == 0 and dt.microsecond == 0:
+        return dt + timedelta(seconds=interval_seconds)
+    return dt + timedelta(
+        seconds=interval_seconds - seconds_since_boundary,
+        microseconds=-dt.microsecond,
+    )
+
+
 def get_network_tariff_rate(
     dt: datetime,
     network: str,
@@ -37,6 +49,10 @@ def get_network_tariff_rate(
     Calls spot_to_tariff with rrp=0 so the result is *only* the network
     charge (no wholesale component).  Loss factors are set to 1.0 because
     the Flow Power formula applies its own GST multiplier.
+
+    aemo_to_tariff expects the NEM dispatch interval end. This integration
+    works from wall-clock/start-of-interval timestamps, so shift to the next
+    5-minute boundary before looking up the tariff window.
 
     Args:
         dt: The timestamp to look up (timezone-aware preferred).
@@ -49,9 +65,10 @@ def get_network_tariff_rate(
     try:
         from aemo_to_tariff import spot_to_tariff
 
+        lookup_dt = _dispatch_interval_end(dt)
         with _suppress_stdout():
             rate = spot_to_tariff(
-                interval_time=dt,
+                interval_time=lookup_dt,
                 network=network,
                 tariff=tariff_code,
                 rrp=0,
@@ -97,7 +114,7 @@ def compute_avg_daily_tariff(
             slot_time = base_date + timedelta(minutes=slot * 30)
             with _suppress_stdout():
                 rate = spot_to_tariff(
-                    interval_time=slot_time,
+                    interval_time=_dispatch_interval_end(slot_time),
                     network=network,
                     tariff=tariff_code,
                     rrp=0,

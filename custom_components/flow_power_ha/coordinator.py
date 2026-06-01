@@ -200,12 +200,45 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             if rate is not None:
                 self._network_tariff_rate = rate
+                data = self._current_data_with_updated_tariff(rate)
+                if data is not None:
+                    self.async_set_updated_data(data)
                 _LOGGER.debug(
                     "Flow Power: Updated network tariff rate: %.4f c/kWh",
                     rate,
                 )
 
         self.hass.async_create_task(_refresh())
+
+    def _current_data_with_updated_tariff(
+        self,
+        network_tariff_rate: float,
+    ) -> dict[str, Any] | None:
+        """Return current coordinator data with import price recalculated."""
+        if not self.data:
+            return None
+
+        data = dict(self.data)
+        data["network_tariff_rate"] = network_tariff_rate
+        data["avg_daily_tariff"] = self._avg_daily_tariff
+
+        wholesale_cents = data.get("wholesale_price")
+        if wholesale_cents is None and data.get("import_price"):
+            wholesale_cents = data["import_price"].get("wholesale")
+
+        if wholesale_cents is None:
+            return data
+
+        data["import_price"] = calculate_import_price(
+            wholesale_cents=wholesale_cents,
+            base_rate=self.base_rate,
+            pea_enabled=self.pea_enabled,
+            pea_custom_value=self.pea_custom_value,
+            twap=self._twap,
+            network_tariff_rate=network_tariff_rate,
+            avg_daily_tariff=self._avg_daily_tariff,
+        )
+        return data
 
     # ------------------------------------------------------------------
     # Adaptive polling helpers

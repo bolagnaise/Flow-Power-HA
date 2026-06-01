@@ -51,6 +51,16 @@ REGION_TIMEZONES = {
 }
 
 
+def _round_number(value: Any, digits: int = 4) -> Any:
+    """Round numeric values for Home Assistant state/attribute display."""
+    if value is None:
+        return None
+    try:
+        return round(float(value), digits)
+    except (TypeError, ValueError):
+        return value
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
@@ -170,6 +180,7 @@ class FlowPowerImportPriceSensor(FlowPowerBaseSensor):
     _attr_name = "Import Price"
     _attr_native_unit_of_measurement = "$/kWh"
     _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_suggested_display_precision = 4
     _attr_icon = "mdi:currency-usd"
 
     def __init__(
@@ -205,8 +216,17 @@ class FlowPowerImportPriceSensor(FlowPowerBaseSensor):
                 "pea_cents": price_info.get("pea"),
                 "wholesale_cents": price_info.get("wholesale"),
                 "twap_used": price_info.get("twap_used"),
-                "network_cents": price_info.get("network"),
-                "gst_cents": price_info.get("gst"),
+                "network_cents": price_info.get("network_tariff_rate"),
+                "avg_daily_tariff": price_info.get("avg_daily_tariff"),
+                "network_tou_adjustment_cents": price_info.get(
+                    "network_tou_adjustment"
+                ),
+                "price_without_network_tou_adjustment_cents": price_info.get(
+                    "price_without_network_tou_adjustment_cents"
+                ),
+                "price_without_network_tou_adjustment_dollars": price_info.get(
+                    "price_without_network_tou_adjustment_dollars"
+                ),
             })
 
         # Build forecast_dict for EMHASS
@@ -238,6 +258,7 @@ class FlowPowerExportPriceSensor(FlowPowerBaseSensor):
     _attr_name = "Export Price"
     _attr_native_unit_of_measurement = "$/kWh"
     _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_suggested_display_precision = 4
     _attr_icon = "mdi:solar-power"
 
     def __init__(
@@ -462,6 +483,7 @@ class FlowPowerTWAPSensor(FlowPowerBaseSensor):
     _attr_name = "TWAP (30-day Average)"
     _attr_native_unit_of_measurement = "c/kWh"
     _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 2
     _attr_icon = "mdi:chart-timeline-variant-shimmer"
 
     def __init__(
@@ -477,7 +499,7 @@ class FlowPowerTWAPSensor(FlowPowerBaseSensor):
     def native_value(self) -> float | None:
         """Return the current TWAP in c/kWh."""
         if self.coordinator.data:
-            return self.coordinator.data.get("twap")
+            return _round_number(self.coordinator.data.get("twap"), 2)
         return None
 
     @property
@@ -515,6 +537,7 @@ class FlowPowerAccountSensor(FlowPowerBaseSensor):
     _attr_name = "Account PEA (Actual)"
     _attr_native_unit_of_measurement = "c/kWh"
     _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 2
     _attr_icon = "mdi:account-cash"
 
     def __init__(
@@ -534,7 +557,7 @@ class FlowPowerAccountSensor(FlowPowerBaseSensor):
         if self.coordinator.data:
             fp_data = self.coordinator.data.get("flowpower_data")
             if fp_data:
-                return fp_data.get("pea_actual")
+                return _round_number(fp_data.get("pea_actual"), 2)
         return None
 
     @property
@@ -552,28 +575,28 @@ class FlowPowerAccountSensor(FlowPowerBaseSensor):
 
         attrs["status"] = "cached" if fp_data.get("cached") else "live"
         attrs.update({
-            "lwap": fp_data.get("lwap"),
-            "lwap_import": fp_data.get("lwap_import"),
-            "lwap_actual": fp_data.get("lwap_actual"),
-            "lwap_import_actual": fp_data.get("lwap_import_actual"),
-            "twap": fp_data.get("twap"),
-            "twap_import": fp_data.get("twap_import"),
-            "avg_rrp": fp_data.get("avg_rrp"),
-            "pea_30_days": fp_data.get("pea_30_days"),
-            "pea_30_import": fp_data.get("pea_30_import"),
-            "pea_actual": fp_data.get("pea_actual"),
-            "pea_target": fp_data.get("pea_target"),
-            "pea_actual_import": fp_data.get("pea_actual_import"),
-            "pea_target_import": fp_data.get("pea_target_import"),
-            "bpea": fp_data.get("bpea"),
-            "bpea_import": fp_data.get("bpea_import"),
-            "cpea": fp_data.get("cpea"),
-            "cpea_import": fp_data.get("cpea_import"),
-            "site_losses_dlf": fp_data.get("site_losses_dlf"),
-            "gst_multiplier": fp_data.get("gst_multiplier"),
-            "avg_usage_kw": fp_data.get("avg_usage_kw"),
-            "avg_import_usage_kw": fp_data.get("avg_import_usage_kw"),
-            "max_usage_kw": fp_data.get("max_usage_kw"),
+            "lwap": _round_number(fp_data.get("lwap"), 4),
+            "lwap_import": _round_number(fp_data.get("lwap_import"), 4),
+            "lwap_actual": _round_number(fp_data.get("lwap_actual"), 4),
+            "lwap_import_actual": _round_number(fp_data.get("lwap_import_actual"), 4),
+            "twap": _round_number(fp_data.get("twap"), 4),
+            "twap_import": _round_number(fp_data.get("twap_import"), 4),
+            "avg_rrp": _round_number(fp_data.get("avg_rrp"), 4),
+            "pea_30_days": _round_number(fp_data.get("pea_30_days"), 4),
+            "pea_30_import": _round_number(fp_data.get("pea_30_import"), 4),
+            "pea_actual": _round_number(fp_data.get("pea_actual"), 4),
+            "pea_target": _round_number(fp_data.get("pea_target"), 4),
+            "pea_actual_import": _round_number(fp_data.get("pea_actual_import"), 4),
+            "pea_target_import": _round_number(fp_data.get("pea_target_import"), 4),
+            "bpea": _round_number(fp_data.get("bpea"), 4),
+            "bpea_import": _round_number(fp_data.get("bpea_import"), 4),
+            "cpea": _round_number(fp_data.get("cpea"), 4),
+            "cpea_import": _round_number(fp_data.get("cpea_import"), 4),
+            "site_losses_dlf": _round_number(fp_data.get("site_losses_dlf"), 4),
+            "gst_multiplier": _round_number(fp_data.get("gst_multiplier"), 4),
+            "avg_usage_kw": _round_number(fp_data.get("avg_usage_kw"), 4),
+            "avg_import_usage_kw": _round_number(fp_data.get("avg_import_usage_kw"), 4),
+            "max_usage_kw": _round_number(fp_data.get("max_usage_kw"), 4),
         })
 
         return attrs
@@ -585,6 +608,7 @@ class FlowPowerNetworkTariffSensor(FlowPowerBaseSensor):
     _attr_name = "Network Tariff"
     _attr_native_unit_of_measurement = "c/kWh"
     _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 2
     _attr_icon = "mdi:transmission-tower"
 
     def __init__(self, coordinator, config_entry, region):
@@ -593,14 +617,16 @@ class FlowPowerNetworkTariffSensor(FlowPowerBaseSensor):
     @property
     def native_value(self):
         if self.coordinator.data:
-            return self.coordinator.data.get("network_tariff_rate")
+            return _round_number(self.coordinator.data.get("network_tariff_rate"), 2)
         return None
 
     @property
     def extra_state_attributes(self):
         attrs = {"region": self._region}
         if self.coordinator.data:
-            attrs["avg_daily_tariff"] = self.coordinator.data.get("avg_daily_tariff")
+            attrs["avg_daily_tariff"] = _round_number(
+                self.coordinator.data.get("avg_daily_tariff"), 2
+            )
             attrs["network"] = self.coordinator.data.get("fp_network")
             attrs["tariff_code"] = self.coordinator.data.get("fp_tariff_code")
         return attrs
@@ -628,6 +654,7 @@ class FlowPowerPortalSensor(FlowPowerBaseSensor):
         self._attr_name = name
         self._attr_native_unit_of_measurement = unit
         self._attr_icon = icon
+        self._attr_suggested_display_precision = 2 if unit == "c/kWh" else 4
         self._data_key = data_key
         self._source = source
 
@@ -639,7 +666,7 @@ class FlowPowerPortalSensor(FlowPowerBaseSensor):
             if fp_data:
                 val = fp_data.get(self._data_key)
                 if val is not None:
-                    return round(val, 4) if isinstance(val, float) else val
+                    return _round_number(val, self._attr_suggested_display_precision)
         return None
 
     @property
