@@ -101,6 +101,16 @@ HAPPY_HOUR_END = time(19, 30)    # 7:30 PM
 PRICE_SOURCE_AEMO = "aemo"
 PRICE_SOURCE_FLOWPOWER = "flowpower"
 
+# Flow Power KWatch API
+FLOWPOWER_API_BASE_URL = "https://api.kwatch.com.au/api/v1"
+FLOWPOWER_KWATCH_REGIONS = {
+    "NSW1": "nsw",
+    "QLD1": "qld",
+    "VIC1": "vic",
+    "SA1": "sa",
+    "TAS1": "tas",
+}
+
 # Configuration Keys
 CONF_PRICE_SOURCE = "price_source"
 CONF_NEM_REGION = "nem_region"
@@ -111,6 +121,8 @@ CONF_PEA_CUSTOM_VALUE = "pea_custom_value"
 # Flow Power Portal Configuration Keys
 CONF_FLOWPOWER_EMAIL = "flowpower_email"
 CONF_FLOWPOWER_PASSWORD = "flowpower_password"
+CONF_FLOWPOWER_API_KEY = "flowpower_api_key"
+CONF_FLOWPOWER_NMI = "flowpower_nmi"
 
 # Default Configuration Values
 DEFAULT_BASE_RATE = 34.0

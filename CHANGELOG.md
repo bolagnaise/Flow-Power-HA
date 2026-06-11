@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.6.3
+
+### Feature: Flow Power KWatch API Support
+
+- Added Flow Power KWatch API key setup as the primary Flow Power connection path.
+- KWatch API entries now fetch current dispatch pricing and forecast pricing directly from Flow Power, with AEMO/NEMWEB retained as a fallback if the API price fetch fails.
+- Added optional residential site selection so account summary metrics such as PEA, TWAP, LWAP, demand, and loss factors can come from `GetResidentialSiteSummary`.
+- Existing portal email/password/MFA entries remain supported as a legacy compatibility path.
+- Added regression coverage for KWatch API key headers, nested JSON responses, price normalization, residential summary normalization, and price-only validation when site metadata is unavailable.
+
 ## v1.6.2
 
 ### Fix: Network Tariff Timing and Import Price Refresh

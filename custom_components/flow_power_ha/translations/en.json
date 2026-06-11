@@ -8,6 +8,20 @@
           "price_source": "Price Source"
         }
       },
+      "flowpower_api_key": {
+        "title": "Flow Power API",
+        "description": "Enter your KWatch API key from your Flow Power account page.",
+        "data": {
+          "flowpower_api_key": "API Key"
+        }
+      },
+      "flowpower_site": {
+        "title": "Flow Power Site",
+        "description": "Select the residential site to use for account pricing summary data.",
+        "data": {
+          "flowpower_nmi": "Site"
+        }
+      },
       "flowpower_login": {
         "title": "Flow Power Login",
         "description": "Enter your Flow Power portal credentials ({portal_url}). An SMS verification code will be sent to your registered phone number.",
@@ -64,10 +78,13 @@
     },
     "error": {
       "cannot_connect": "Failed to connect to API",
+      "invalid_api_key": "Invalid Flow Power API key",
       "invalid_credentials": "Invalid Flow Power email or password",
       "invalid_mfa_code": "Invalid verification code",
+      "invalid_site": "Invalid Flow Power site",
       "invalid_tariff": "Could not load tariff data for the selected network and tariff code",
       "mfa_verification_failed": "SMS verification failed — please try again",
+      "no_sites": "No Flow Power sites or price data were available for this API key",
       "unknown": "Unexpected error"
     },
     "abort": {
@@ -84,8 +101,16 @@
           "pea_enabled": "Enable PEA Calculation",
           "pea_custom_value": "Custom PEA Value (c/kWh)",
           "fp_network": "Electricity Distributor (DNSP)",
+          "flowpower_api_key": "Flow Power API Key",
           "reauth_flowpower": "Re-authenticate with Flow Power portal",
           "connect_flowpower": "Connect Flow Power portal account"
+        }
+      },
+      "flowpower_site_options": {
+        "title": "Flow Power Site",
+        "description": "Select the residential site to use for account pricing summary data.",
+        "data": {
+          "flowpower_nmi": "Site"
         }
       },
       "options_tariff_code": {

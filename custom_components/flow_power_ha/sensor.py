@@ -18,7 +18,9 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
+    CONF_FLOWPOWER_API_KEY,
     CONF_FLOWPOWER_EMAIL,
+    CONF_FLOWPOWER_NMI,
     CONF_FP_NETWORK,
     CONF_NEM_REGION,
     CONF_PRICE_SOURCE,
@@ -80,7 +82,9 @@ async def async_setup_entry(
 
     # Add Flow Power portal sensors when portal credentials are configured
     merged = {**config_entry.data, **config_entry.options}
-    if merged.get(CONF_FLOWPOWER_EMAIL):
+    if merged.get(CONF_FLOWPOWER_EMAIL) or (
+        merged.get(CONF_FLOWPOWER_API_KEY) and merged.get(CONF_FLOWPOWER_NMI)
+    ):
         # Keep the main Account PEA sensor (has all attributes)
         entities.append(
             FlowPowerAccountSensor(coordinator, config_entry, region)

@@ -5,16 +5,20 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+import aiohttp
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers import selector
 
 from .api_clients import FlowPowerPortalClient
 from .const import (
     CONF_BASE_RATE,
+    CONF_FLOWPOWER_API_KEY,
     CONF_FLOWPOWER_EMAIL,
+    CONF_FLOWPOWER_NMI,
     CONF_FLOWPOWER_PASSWORD,
     CONF_FP_NETWORK,
     CONF_FP_TARIFF_CODE,
@@ -24,6 +28,7 @@ from .const import (
     CONF_PRICE_SOURCE,
     DEFAULT_BASE_RATE,
     DOMAIN,
+    FLOWPOWER_KWATCH_REGIONS,
     NETWORK_API_NAME,
     NETWORK_TARIFF_URL,
     NEM_REGIONS,
@@ -31,9 +36,72 @@ from .const import (
     PRICE_SOURCE_FLOWPOWER,
     REGION_NETWORKS,
 )
+from .flow_power_api import FlowPowerAPIClient, FlowPowerAPIError
 from .tariff_utils import get_network_tariff_rate, get_tariff_codes_for_network
 
 _LOGGER = logging.getLogger(__name__)
+
+
+async def validate_flowpower_api_key(
+    hass,
+    api_key: str,
+    region: str = "NSW1",
+) -> dict[str, Any]:
+    """Validate a Flow Power KWatch API key."""
+    if not api_key:
+        return {"success": False, "error": "invalid_api_key"}
+
+    site_lookup_error: str | None = None
+    client = FlowPowerAPIClient(api_key, async_get_clientsession(hass))
+    try:
+        sites = await client.get_residential_sites()
+    except FlowPowerAPIError as err:
+        if str(err) == "invalid_api_key":
+            return {"success": False, "error": "invalid_api_key"}
+        site_lookup_error = str(err)
+        sites = []
+    except aiohttp.ClientError:
+        site_lookup_error = "cannot_connect"
+        sites = []
+    except Exception as err:
+        _LOGGER.exception("Flow Power API site validation failed: %s", err)
+        site_lookup_error = "cannot_connect"
+        sites = []
+
+    if sites:
+        return {"success": True, "sites": sites}
+
+    api_region = FLOWPOWER_KWATCH_REGIONS.get(region, str(region).lower())
+    try:
+        dispatch = await client.dispatch5mins(api_region, period=1)
+        forecast = await client.predispatch30mins(api_region, period=1)
+    except FlowPowerAPIError as err:
+        if str(err) == "invalid_api_key":
+            return {"success": False, "error": "invalid_api_key"}
+        return {"success": False, "error": "cannot_connect"}
+    except aiohttp.ClientError:
+        return {"success": False, "error": "cannot_connect"}
+    except Exception as err:
+        _LOGGER.exception("Flow Power API price validation failed: %s", err)
+        return {"success": False, "error": "cannot_connect"}
+
+    if dispatch and forecast:
+        return {
+            "success": True,
+            "sites": [],
+            "site_lookup_error": site_lookup_error or "no_sites",
+        }
+    return {
+        "success": False,
+        "error": "cannot_connect" if site_lookup_error else "no_sites",
+    }
+
+
+def _flowpower_site_label(site: dict[str, Any]) -> str:
+    """Return a display label for a Flow Power API site."""
+    nmi = site.get("nmi", "")
+    tariff = site.get("networkTariff")
+    return f"{nmi} - {tariff}" if tariff else str(nmi)
 
 
 class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -46,6 +114,7 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._data: dict[str, Any] = {}
         self._region: str = "NSW1"
         self._fp_client: FlowPowerPortalClient | None = None
+        self._flowpower_sites: list[dict[str, Any]] = []
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -56,10 +125,7 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             self._data[CONF_PRICE_SOURCE] = user_input[CONF_PRICE_SOURCE]
 
-            if user_input[CONF_PRICE_SOURCE] == PRICE_SOURCE_FLOWPOWER:
-                return await self.async_step_flowpower_login()
-            else:
-                return await self.async_step_region()
+            return await self.async_step_region()
 
         return self.async_show_form(
             step_id="user",
@@ -68,7 +134,7 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     selector.SelectSelectorConfig(
                         options=[
                             selector.SelectOptionDict(value=PRICE_SOURCE_AEMO, label="AEMO (Direct wholesale)"),
-                            selector.SelectOptionDict(value=PRICE_SOURCE_FLOWPOWER, label="Flow Power (Portal login)"),
+                            selector.SelectOptionDict(value=PRICE_SOURCE_FLOWPOWER, label="Flow Power API (KWatch)"),
                         ],
                         mode=selector.SelectSelectorMode.LIST,
                     )
@@ -160,6 +226,8 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             self._data[CONF_NEM_REGION] = user_input[CONF_NEM_REGION]
             self._region = user_input[CONF_NEM_REGION]
+            if self._data.get(CONF_PRICE_SOURCE) == PRICE_SOURCE_FLOWPOWER and not self._data.get(CONF_FLOWPOWER_API_KEY):
+                return await self.async_step_flowpower_api_key()
             return await self.async_step_tariff()
 
         region_options = [
@@ -177,6 +245,81 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
                 ),
             }),
+        )
+
+    async def async_step_flowpower_api_key(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle Flow Power KWatch API key entry."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            api_key = user_input.get(CONF_FLOWPOWER_API_KEY, "").strip()
+            result = await validate_flowpower_api_key(
+                self.hass,
+                api_key,
+                self._data.get(CONF_NEM_REGION, "NSW1"),
+            )
+            if result["success"]:
+                self._data[CONF_FLOWPOWER_API_KEY] = api_key
+                self._flowpower_sites = result.get("sites", [])
+                if len(self._flowpower_sites) == 1:
+                    self._data[CONF_FLOWPOWER_NMI] = self._flowpower_sites[0]["nmi"]
+                    return await self.async_step_tariff()
+                if self._flowpower_sites:
+                    return await self.async_step_flowpower_site()
+                return await self.async_step_tariff()
+            errors["base"] = result.get("error", "cannot_connect")
+
+        return self.async_show_form(
+            step_id="flowpower_api_key",
+            data_schema=vol.Schema({
+                vol.Required(CONF_FLOWPOWER_API_KEY): selector.TextSelector(
+                    selector.TextSelectorConfig(
+                        type=selector.TextSelectorType.PASSWORD
+                    )
+                ),
+            }),
+            errors=errors,
+        )
+
+    async def async_step_flowpower_site(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle Flow Power residential site selection."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            selected_nmi = user_input.get(CONF_FLOWPOWER_NMI)
+            site = next(
+                (
+                    item for item in self._flowpower_sites
+                    if item.get("nmi") == selected_nmi
+                ),
+                None,
+            )
+            if site:
+                self._data[CONF_FLOWPOWER_NMI] = selected_nmi
+                return await self.async_step_tariff()
+            errors["base"] = "invalid_site"
+
+        return self.async_show_form(
+            step_id="flowpower_site",
+            data_schema=vol.Schema({
+                vol.Required(CONF_FLOWPOWER_NMI): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[
+                            selector.SelectOptionDict(
+                                value=site["nmi"],
+                                label=_flowpower_site_label(site),
+                            )
+                            for site in self._flowpower_sites
+                        ],
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+            }),
+            errors=errors,
         )
 
     async def async_step_tariff(
@@ -318,6 +461,7 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
         """Initialize the options flow."""
         self._fp_client: FlowPowerPortalClient | None = None
         self._options_data: dict[str, Any] = {}
+        self._flowpower_sites: list[dict[str, Any]] = []
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -326,6 +470,35 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             # Save form data — needed if we branch to reauth then come back
             wants_reauth = user_input.pop("reauth_flowpower", False) or user_input.pop("connect_flowpower", False)
+            api_key = user_input.get(CONF_FLOWPOWER_API_KEY, "")
+            if isinstance(api_key, str):
+                api_key = api_key.strip()
+
+            current = {**self.config_entry.data, **self.config_entry.options}
+            if api_key:
+                result = await validate_flowpower_api_key(
+                    self.hass,
+                    api_key,
+                    current.get(CONF_NEM_REGION, "NSW1"),
+                )
+                if not result["success"]:
+                    return self.async_show_form(
+                        step_id="init",
+                        data_schema=self._init_schema(current),
+                        errors={"base": result.get("error", "cannot_connect")},
+                    )
+                user_input[CONF_FLOWPOWER_API_KEY] = api_key
+                self._flowpower_sites = result.get("sites", [])
+                if len(self._flowpower_sites) == 1:
+                    user_input[CONF_FLOWPOWER_NMI] = self._flowpower_sites[0]["nmi"]
+                elif self._flowpower_sites:
+                    self._options_data = user_input
+                    return await self.async_step_flowpower_site_options()
+            elif current.get(CONF_FLOWPOWER_API_KEY):
+                user_input[CONF_FLOWPOWER_API_KEY] = current[CONF_FLOWPOWER_API_KEY]
+                if current.get(CONF_FLOWPOWER_NMI):
+                    user_input[CONF_FLOWPOWER_NMI] = current[CONF_FLOWPOWER_NMI]
+
             self._options_data = user_input
 
             # Check if user wants to connect/re-authenticate Flow Power portal
@@ -342,6 +515,14 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
             return self.async_create_entry(title="", data=user_input)
 
         current = {**self.config_entry.data, **self.config_entry.options}
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=self._init_schema(current),
+        )
+
+    def _init_schema(self, current: dict[str, Any]) -> vol.Schema:
+        """Build the options form schema."""
 
         # Determine network options for the configured region
         region = current.get(CONF_NEM_REGION, "NSW1")
@@ -392,6 +573,11 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
                     mode=selector.SelectSelectorMode.DROPDOWN,
                 )
             ),
+            vol.Optional(CONF_FLOWPOWER_API_KEY): selector.TextSelector(
+                selector.TextSelectorConfig(
+                    type=selector.TextSelectorType.PASSWORD
+                )
+            ),
         }
 
         # Flow Power portal: show connect or re-authenticate option
@@ -406,9 +592,48 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
                 vol.Optional("connect_flowpower", default=False)
             ] = selector.BooleanSelector()
 
+        return vol.Schema(schema_fields)
+
+    async def async_step_flowpower_site_options(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle Flow Power residential site selection in options."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            selected_nmi = user_input.get(CONF_FLOWPOWER_NMI)
+            site = next(
+                (
+                    item for item in self._flowpower_sites
+                    if item.get("nmi") == selected_nmi
+                ),
+                None,
+            )
+            if site:
+                self._options_data[CONF_FLOWPOWER_NMI] = selected_nmi
+                fp_network = self._options_data.get(CONF_FP_NETWORK, "")
+                if fp_network:
+                    return await self.async_step_options_tariff_code()
+                return self.async_create_entry(title="", data=self._options_data)
+            errors["base"] = "invalid_site"
+
         return self.async_show_form(
-            step_id="init",
-            data_schema=vol.Schema(schema_fields),
+            step_id="flowpower_site_options",
+            data_schema=vol.Schema({
+                vol.Required(CONF_FLOWPOWER_NMI): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[
+                            selector.SelectOptionDict(
+                                value=site["nmi"],
+                                label=_flowpower_site_label(site),
+                            )
+                            for site in self._flowpower_sites
+                        ],
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+            }),
+            errors=errors,
         )
 
     async def async_step_options_tariff_code(

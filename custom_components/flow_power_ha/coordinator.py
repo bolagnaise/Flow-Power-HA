@@ -29,7 +29,9 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .api_clients import AEMOClient, FlowPowerPortalClient
 from .const import (
     CONF_BASE_RATE,
+    CONF_FLOWPOWER_API_KEY,
     CONF_FLOWPOWER_EMAIL,
+    CONF_FLOWPOWER_NMI,
     CONF_FLOWPOWER_PASSWORD,
     CONF_FP_NETWORK,
     CONF_FP_TARIFF_CODE,
@@ -40,6 +42,7 @@ from .const import (
     DEFAULT_BASE_RATE,
     DEFAULT_TWAP_WINDOW_DAYS,
     DOMAIN,
+    FLOWPOWER_KWATCH_REGIONS,
     MIN_TWAP_SAMPLES,
     NETWORK_API_NAME,
     PRICE_SOURCE_AEMO,
@@ -47,6 +50,7 @@ from .const import (
     UPDATE_INTERVAL_CURRENT,
     UPDATE_INTERVAL_FLOWPOWER,
 )
+from .flow_power_api import FlowPowerAPIClient
 from .tariff_utils import compute_avg_daily_tariff, get_network_tariff_rate
 from .pricing import (
     calculate_export_price,
@@ -90,6 +94,7 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._session: aiohttp.ClientSession | None = None
         self._aemo_client: AEMOClient | None = None
         self._fp_client: FlowPowerPortalClient | None = None
+        self._fp_api_client: FlowPowerAPIClient | None = None
         self._unsub_time_listeners: list = []
 
         # Configuration
@@ -109,7 +114,10 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Flow Power portal config (may come from initial data or options)
         self.fp_email = config.get(CONF_FLOWPOWER_EMAIL)
         self.fp_password = config.get(CONF_FLOWPOWER_PASSWORD)
+        self.fp_api_key = config.get(CONF_FLOWPOWER_API_KEY)
+        self.fp_nmi = config.get(CONF_FLOWPOWER_NMI)
         self.fp_enabled = bool(self.fp_email and self.fp_password)
+        self.fp_api_enabled = bool(self.fp_api_key)
 
         # TWAP tracking
         self._price_history: list[dict[str, Any]] = []
@@ -120,7 +128,7 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Import price history for ApexCharts: [[epoch_ms, cents], ...]
         self._import_price_history: list[list[int | float]] = []
 
-        # Flow Power portal data
+        # Flow Power portal/API account data
         self._fp_data: dict[str, Any] | None = None
         self._fp_last_fetch: float = 0
         self._fp_auth_failed: bool = False
@@ -322,6 +330,9 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self.price_source in (PRICE_SOURCE_AEMO, PRICE_SOURCE_FLOWPOWER):
             self._aemo_client = AEMOClient(self._session)
 
+        if self.fp_api_enabled:
+            self._fp_api_client = FlowPowerAPIClient(self.fp_api_key, self._session)
+
         # Initialise network tariff data if configured
         if self._fp_network and self._fp_tariff_code:
             api_name = NETWORK_API_NAME.get(self._fp_network)
@@ -381,14 +392,14 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._fp_client = FlowPowerPortalClient()
             await self._fp_authenticate()
 
-        # Restore cached portal data so sensors don't go unknown on restart
-        if self.fp_enabled and not self._fp_data:
+        # Restore cached account data so sensors don't go unknown on restart
+        if (self.fp_enabled or self.fp_api_enabled) and not self._fp_data:
             cached = await self._fp_data_store.async_load()
             if cached and isinstance(cached.get("data"), dict):
                 self._fp_data = cached["data"]
                 self._fp_data["cached"] = True
                 _LOGGER.info(
-                    "Flow Power: Restored cached portal data "
+                    "Flow Power: Restored cached account data "
                     "(PEA=%.2f, TWAP=%.2f) — will refresh when session restored",
                     self._fp_data.get("pea_actual", 0),
                     self._fp_data.get("twap", 0),
@@ -516,11 +527,18 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 data["forecast"] = self.data.get("forecast", [])
                 data["last_update"] = self.data.get("last_update")
 
-            # Portal account data is independent of NEMWEB dispatch timing —
-            # always check it regardless of polling mode so that the 30-minute
-            # portal refresh window is honoured even during WAIT mode.
-            if self.fp_enabled:
+            # Account data is independent of dispatch timing.
+            if self.fp_api_enabled and self.fp_nmi:
+                await self._fetch_flowpower_api_data(data)
+            elif self.fp_enabled:
                 await self._fetch_flowpower_data(data)
+
+            # KWatch API pricing is the primary Flow Power path when an API key
+            # is configured. If it fails, fall through to the existing AEMO path.
+            if self.fp_api_enabled:
+                if await self._fetch_kwatch_price_data(data):
+                    data["export_price"] = calculate_export_price(self.region)
+                    return data
 
             # Decide whether to hit NEMWEB this cycle.
             should_fetch = self._adjust_poll_interval()
@@ -655,6 +673,123 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ------------------------------------------------------------------
     # Portal data fetch (unchanged)
     # ------------------------------------------------------------------
+
+    async def _fetch_kwatch_price_data(self, data: dict[str, Any]) -> bool:
+        """Fetch current and forecast prices from the Flow Power KWatch API."""
+        if not self._fp_api_client:
+            return False
+
+        api_region = FLOWPOWER_KWATCH_REGIONS.get(self.region, self.region.lower())
+        try:
+            dispatch = await self._fp_api_client.dispatch5mins(api_region, period=60)
+            forecast_30 = await self._fp_api_client.predispatch30mins(
+                api_region,
+                period=2,
+            )
+            forecast_5 = await self._fp_api_client.predispatch5mins(
+                api_region,
+                period=60,
+            )
+        except Exception as err:
+            _LOGGER.warning(
+                "Flow Power: KWatch price fetch failed, falling back to AEMO: %s",
+                err,
+            )
+            return False
+
+        if not dispatch:
+            _LOGGER.warning("Flow Power: KWatch returned no dispatch prices")
+            return False
+
+        latest = dispatch[-1]
+        wholesale_cents = latest.get("perKwh")
+        if wholesale_cents is None:
+            return False
+
+        self._record_price(wholesale_cents)
+        data["twap"] = self._twap
+        data["twap_days"] = self._get_twap_days()
+        data["twap_samples"] = len(self._price_history)
+
+        import_info = calculate_import_price(
+            wholesale_cents=wholesale_cents,
+            base_rate=self.base_rate,
+            pea_enabled=self.pea_enabled,
+            pea_custom_value=self.pea_custom_value,
+            twap=self._twap,
+            network_tariff_rate=self._network_tariff_rate,
+            avg_daily_tariff=self._avg_daily_tariff,
+        )
+
+        data["import_price"] = import_info
+        data["wholesale_price"] = wholesale_cents
+        data["last_update"] = latest.get("nemTime")
+        data["price_source"] = "flowpower_kwatch"
+
+        epoch_ms = int(time_mod.time() * 1000)
+        price_cents = import_info.get("final_cents")
+        if price_cents is not None:
+            self._import_price_history.append([epoch_ms, price_cents])
+            if len(self._import_price_history) > 576:
+                self._import_price_history = self._import_price_history[-576:]
+
+        forecast_raw = forecast_30 or forecast_5
+        if forecast_raw:
+            data["forecast"] = calculate_forecast_prices(
+                forecast_raw,
+                base_rate=self.base_rate,
+                pea_enabled=self.pea_enabled,
+                pea_custom_value=self.pea_custom_value,
+                twap=self._twap,
+                tariff_schedule=self._tariff_schedule,
+                avg_daily_tariff=self._avg_daily_tariff,
+            )
+
+        self._next_boundary = self._calc_next_boundary()
+        self.update_interval = timedelta(seconds=UPDATE_INTERVAL_CURRENT)
+        _LOGGER.info(
+            "Flow Power: KWatch update — price=%.2f c/kWh, forecast_periods=%d",
+            wholesale_cents,
+            len(data.get("forecast", [])),
+        )
+        return True
+
+    async def _fetch_flowpower_api_data(self, data: dict[str, Any]) -> None:
+        """Fetch account data from the Flow Power KWatch API."""
+        if not self._fp_api_client or not self.fp_nmi:
+            if self._fp_data:
+                data["flowpower_data"] = self._fp_data
+            return
+
+        now = time_mod.time()
+        if now - self._fp_last_fetch < UPDATE_INTERVAL_FLOWPOWER and self._fp_data:
+            data["flowpower_data"] = self._fp_data
+            return
+
+        try:
+            account_data = await self._fp_api_client.get_residential_site_summary(
+                self.fp_nmi
+            )
+        except Exception as err:
+            _LOGGER.warning("Flow Power: KWatch account fetch failed: %s", err)
+            if self._fp_data:
+                data["flowpower_data"] = self._fp_data
+            return
+
+        if account_data:
+            account_data.pop("cached", None)
+            self._fp_data = account_data
+            self._fp_last_fetch = now
+            data["flowpower_data"] = account_data
+            _LOGGER.info(
+                "Flow Power: KWatch account data updated - TWAP=%.2f, PEA=%.2f, LWAP=%.2f",
+                account_data.get("twap", 0),
+                account_data.get("pea_actual", 0),
+                account_data.get("lwap", 0),
+            )
+            await self._save_fp_data_cache()
+        elif self._fp_data:
+            data["flowpower_data"] = self._fp_data
 
     async def _check_pending_fp_client(self) -> bool:
         """Check for a freshly authenticated client from reauth flow.
