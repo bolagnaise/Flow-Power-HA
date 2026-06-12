@@ -1,7 +1,7 @@
 """Flow Power pricing calculations including PEA and export rates."""
 from __future__ import annotations
 
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -277,6 +277,10 @@ def calculate_forecast_prices(
                     # Also handle ISO format: "2026-04-01T13:30:00"
                     ts = timestamp_str.replace("/", "-")
                     dt = datetime.fromisoformat(ts)
+                    interval_minutes = int(period.get("duration", 30) or 30)
+                    # Forecast timestamps represent the end of the interval, while
+                    # tariff schedules are keyed by the interval being priced.
+                    dt = dt - timedelta(minutes=interval_minutes)
                     # Half-hour slot: 0-47 (hour * 2 + minute // 30)
                     slot_index = dt.hour * 2 + dt.minute // 30
                     network_tariff_rate = tariff_schedule.get(slot_index)

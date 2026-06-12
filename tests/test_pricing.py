@@ -15,7 +15,7 @@ package = types.ModuleType("flow_power_ha")
 package.__path__ = [str(COMPONENT_ROOT)]
 sys.modules.setdefault("flow_power_ha", package)
 
-from flow_power_ha.pricing import calculate_import_price  # noqa: E402
+from flow_power_ha.pricing import calculate_forecast_prices, calculate_import_price  # noqa: E402
 from flow_power_ha.tariff_utils import _dispatch_interval_end  # noqa: E402
 from flow_power_ha.flow_power_api import FlowPowerAPIClient, FlowPowerAPIError  # noqa: E402
 
@@ -161,6 +161,30 @@ def test_flowpower_api_client_decodes_nested_json_strings() -> None:
     assert dispatch[0]["perKwh"] == 12.34
 
 
+def test_flowpower_api_client_normalizes_uppercase_fields_and_infers_timestamps() -> None:
+    session = _FakeSession(
+        {
+            "predispatch30mins": {
+                "RESULT": [
+                    {"FORECAST_DATETIME": "2026/06/08 10:30", "PRICE": 100.0},
+                    {"RRP": 200.0},
+                    {"price_mwh": 300.0},
+                ]
+            }
+        }
+    )
+    client = FlowPowerAPIClient("secret-key", session)  # type: ignore[arg-type]
+
+    forecast = asyncio.run(client.predispatch30mins("nsw"))
+
+    assert [entry["nemTime"] for entry in forecast] == [
+        "2026-06-08T10:30:00+00:00",
+        "2026-06-08T11:00:00+00:00",
+        "2026-06-08T11:30:00+00:00",
+    ]
+    assert [entry["perKwh"] for entry in forecast] == [10.0, 20.0, 30.0]
+
+
 def test_flowpower_price_endpoints_can_work_when_site_lookup_fails() -> None:
     session = _FakeSession(
         {
@@ -196,6 +220,26 @@ def test_flowpower_price_endpoints_can_work_when_site_lookup_fails() -> None:
         "dispatch5mins",
         "predispatch30mins",
     ]
+
+
+def test_forecast_tariff_lookup_uses_interval_start_slot() -> None:
+    forecast = calculate_forecast_prices(
+        [
+            {"nemTime": "2026-06-08T10:00:00+10:00", "perKwh": 10.0, "duration": 30},
+            {"nemTime": "2026-06-08T10:30:00+10:00", "perKwh": 10.0, "duration": 30},
+        ],
+        base_rate=34.0,
+        pea_enabled=True,
+        twap=10.0,
+        tariff_schedule={
+            19: 1.5,  # 09:30-10:00
+            20: 9.0,  # 10:00-10:30
+        },
+        avg_daily_tariff=0.0,
+    )
+
+    assert forecast[0]["network_tariff_rate"] == 1.5
+    assert forecast[1]["network_tariff_rate"] == 9.0
 
 
 def test_config_flow_and_coordinator_wire_kwatch_api_paths() -> None:

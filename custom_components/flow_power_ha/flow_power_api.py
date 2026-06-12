@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from math import isfinite
 from typing import Any
 
@@ -102,7 +102,7 @@ class FlowPowerAPIClient:
             return [item for item in payload if isinstance(item, dict)]
         if isinstance(payload, dict):
             for key in keys + ("data", "result", "results", "items", "value"):
-                value = payload.get(key)
+                value = FlowPowerAPIClient._get_value(payload, key)
                 if isinstance(value, list):
                     return [item for item in value if isinstance(item, dict)]
                 if isinstance(value, dict):
@@ -113,10 +113,27 @@ class FlowPowerAPIClient:
         return []
 
     @staticmethod
+    def _normalize_key(key: str) -> str:
+        """Normalize API keys for case/underscore-insensitive lookup."""
+        return "".join(ch for ch in key.lower() if ch.isalnum())
+
+    @staticmethod
+    def _get_value(record: dict[str, Any], key: str) -> Any:
+        """Return an exact or normalized key match from a record."""
+        if key in record:
+            return record[key]
+
+        wanted = FlowPowerAPIClient._normalize_key(key)
+        for record_key, value in record.items():
+            if FlowPowerAPIClient._normalize_key(str(record_key)) == wanted:
+                return value
+        return None
+
+    @staticmethod
     def _first_number(record: dict[str, Any], *keys: str) -> float | None:
         """Return the first finite numeric value for one of the supplied keys."""
         for key in keys:
-            value = record.get(key)
+            value = FlowPowerAPIClient._get_value(record, key)
             if value in (None, ""):
                 continue
             try:
@@ -131,7 +148,7 @@ class FlowPowerAPIClient:
     def _first_text(record: dict[str, Any], *keys: str) -> str | None:
         """Return the first non-empty string value for one of the supplied keys."""
         for key in keys:
-            value = record.get(key)
+            value = FlowPowerAPIClient._get_value(record, key)
             if value not in (None, ""):
                 return str(value)
         return None
@@ -142,7 +159,7 @@ class FlowPowerAPIClient:
         if value in (None, ""):
             return None
         if isinstance(value, datetime):
-            return value
+            return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
         text = str(value).strip()
         if not text:
@@ -155,14 +172,26 @@ class FlowPowerAPIClient:
             "%Y-%m-%dT%H:%M:%S",
             "%Y-%m-%d %H:%M:%S",
             "%Y/%m/%d %H:%M:%S",
+            "%Y/%m/%d %H:%M",
+            "%d/%m/%Y %H:%M:%S",
+            "%d/%m/%Y %H:%M",
         ):
             try:
                 if fmt is None:
-                    return datetime.fromisoformat(text)
-                return datetime.strptime(text, fmt)
+                    parsed = datetime.fromisoformat(text)
+                else:
+                    parsed = datetime.strptime(text, fmt)
+                return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
             except ValueError:
                 continue
         return None
+
+    @staticmethod
+    def _align_to_interval(value: datetime, duration: int) -> datetime:
+        """Snap a timestamp down to the start of its interval."""
+        value = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        minute = (value.minute // duration) * duration
+        return value.replace(minute=minute, second=0, microsecond=0)
 
     async def get_residential_sites(self) -> list[dict[str, Any]]:
         """Return residential sites available to the API key."""
@@ -247,11 +276,46 @@ class FlowPowerAPIClient:
             "PriceData",
         )
         normalized: list[dict[str, Any]] = []
-        for record in records:
+        fallback_start = self._align_to_interval(datetime.now(timezone.utc), duration)
+        for idx, record in enumerate(records):
+            explicit_time = self._parse_time(
+                self._first_text(
+                    record,
+                    "time",
+                    "Time",
+                    "timestamp",
+                    "Timestamp",
+                    "settlementDate",
+                    "SettlementDate",
+                    "dateTime",
+                    "DateTime",
+                    "periodDateTime",
+                    "PeriodDateTime",
+                    "intervalDateTime",
+                    "IntervalDateTime",
+                    "forecastDateTime",
+                    "ForecastDateTime",
+                    "tradingInterval",
+                    "TradingInterval",
+                    "tradingIntervalStart",
+                    "TradingIntervalStart",
+                    "startTime",
+                    "StartTime",
+                    "key",
+                    "Key",
+                )
+            )
+            if explicit_time is not None:
+                fallback_start = explicit_time - timedelta(minutes=duration * idx)
+                break
+        inferred_timestamps = 0
+        for idx, record in enumerate(records):
             price_mwh = self._first_number(
                 record,
                 "price",
                 "Price",
+                "priceMwh",
+                "price_mwh",
                 "rrp",
                 "RRP",
                 "Rrp",
@@ -275,16 +339,26 @@ class FlowPowerAPIClient:
                     "DateTime",
                     "periodDateTime",
                     "PeriodDateTime",
+                    "intervalDateTime",
+                    "IntervalDateTime",
+                    "forecastDateTime",
+                    "ForecastDateTime",
+                    "tradingInterval",
+                    "TradingInterval",
+                    "tradingIntervalStart",
+                    "TradingIntervalStart",
+                    "startTime",
+                    "StartTime",
+                    "key",
+                    "Key",
                 )
             )
-            timestamp = (
-                period_time.isoformat()
-                if period_time is not None
-                else datetime.now().isoformat()
-            )
+            if period_time is None:
+                period_time = fallback_start + timedelta(minutes=duration * idx)
+                inferred_timestamps += 1
             normalized.append(
                 {
-                    "nemTime": timestamp,
+                    "nemTime": period_time.isoformat(),
                     "perKwh": price_mwh / 10.0,
                     "wholesaleKWHPrice": price_mwh / 1000.0,
                     "price_mwh": price_mwh,
@@ -293,6 +367,12 @@ class FlowPowerAPIClient:
                 }
             )
 
+        if inferred_timestamps:
+            _LOGGER.debug(
+                "Flow Power API inferred %d/%d price timestamps from response order",
+                inferred_timestamps,
+                len(normalized),
+            )
         normalized.sort(key=lambda item: item["nemTime"])
         return normalized
 
