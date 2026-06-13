@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.6.4
+
+### Fix: KWatch Forecast Parsing and TOU Alignment
+
+- KWatch forecast parsing now accepts uppercase and underscore-separated field names that Flow Power has started returning in some API responses.
+- Forecast periods with missing timestamps are now inferred from the surrounding sequence instead of collapsing onto the current time, so sparse KWatch payloads still produce a complete ordered forecast.
+- Forecast network tariff lookup now applies the tariff for the interval being priced instead of the interval-end timestamp, fixing the half-hour TOU shift reported in forecast sensors.
+- Added regression coverage for mixed-format KWatch forecast payloads and the forecast tariff boundary case.
+
 ## v1.6.3
 
 ### Feature: Flow Power KWatch API Support
