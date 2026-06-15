@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.6.5
+
+### Fix: KWatch API Key Setup Validation
+
+- Flow Power KWatch API key validation now checks a wider dispatch window during setup so valid keys are not rejected just because no price landed in the most recent 5-minute slice.
+- Setup now also probes the 5-minute predispatch endpoint and accepts the API key when dispatch pricing is available even if site metadata or forecast data is temporarily sparse.
+- Added regression coverage for the wider dispatch probe, 5-minute forecast fallback, and the price-only success path used by config flow validation.
+
 ## v1.6.4
 
 ### Fix: KWatch Forecast Parsing and TOU Alignment
