@@ -248,8 +248,10 @@ def test_config_flow_and_coordinator_wire_kwatch_api_paths() -> None:
     sensor_source = (COMPONENT_ROOT / "sensor.py").read_text()
 
     assert "validate_flowpower_api_key" in config_flow_source
-    assert "client.dispatch5mins(api_region, period=1)" in config_flow_source
+    assert "client.dispatch5mins(api_region, period=60)" in config_flow_source
     assert "client.predispatch30mins(api_region, period=1)" in config_flow_source
+    assert "client.predispatch5mins(api_region, period=60)" in config_flow_source
+    assert "if dispatch:" in config_flow_source
     assert "async_step_flowpower_site" in config_flow_source
     assert "async_step_flowpower_site_options" in config_flow_source
     assert "FlowPowerAPIClient(self.fp_api_key" in coordinator_source

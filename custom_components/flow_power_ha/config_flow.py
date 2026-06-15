@@ -72,9 +72,13 @@ async def validate_flowpower_api_key(
         return {"success": True, "sites": sites}
 
     api_region = FLOWPOWER_KWATCH_REGIONS.get(region, str(region).lower())
+    dispatch: list[dict[str, Any]] = []
+    forecast_30: list[dict[str, Any]] = []
+    forecast_5: list[dict[str, Any]] = []
     try:
-        dispatch = await client.dispatch5mins(api_region, period=1)
-        forecast = await client.predispatch30mins(api_region, period=1)
+        dispatch = await client.dispatch5mins(api_region, period=60)
+        forecast_30 = await client.predispatch30mins(api_region, period=1)
+        forecast_5 = await client.predispatch5mins(api_region, period=60)
     except FlowPowerAPIError as err:
         if str(err) == "invalid_api_key":
             return {"success": False, "error": "invalid_api_key"}
@@ -85,11 +89,12 @@ async def validate_flowpower_api_key(
         _LOGGER.exception("Flow Power API price validation failed: %s", err)
         return {"success": False, "error": "cannot_connect"}
 
-    if dispatch and forecast:
+    if dispatch:
         return {
             "success": True,
             "sites": [],
             "site_lookup_error": site_lookup_error or "no_sites",
+            "has_forecast": bool(forecast_30 or forecast_5),
         }
     return {
         "success": False,
