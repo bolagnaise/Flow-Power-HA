@@ -171,9 +171,15 @@ class FlowPowerBaseSensor(CoordinatorEntity[FlowPowerCoordinator], SensorEntity)
             tz = ZoneInfo(tz_name)
 
             if "/" in timestamp:
+                # AEMO slash format: "2026/06/16 13:30:00"
                 dt = datetime.strptime(timestamp, "%Y/%m/%d %H:%M:%S")
                 return dt.replace(tzinfo=tz)
-            return None
+            else: 
+                # ISO format: "2026-06-16T22:00:00+10:00" or "2026-06-16T22:00:00"
+                dt = datetime.fromisoformat(timestamp)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=tz)
+                return dt
         except (ValueError, TypeError):
             return None
 
