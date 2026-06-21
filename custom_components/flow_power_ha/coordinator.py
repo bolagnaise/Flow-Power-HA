@@ -210,7 +210,8 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._network_tariff_rate = rate
                 data = self._current_data_with_updated_tariff(rate)
                 if data is not None:
-                    self.async_set_updated_data(data)
+                    self.data = data
+                    self.async_update_listeners()
                 _LOGGER.debug(
                     "Flow Power: Updated network tariff rate: %.4f c/kWh",
                     rate,
