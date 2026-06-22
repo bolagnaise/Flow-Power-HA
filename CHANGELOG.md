@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.6.6
+
+### Fix: KWatch Polling No Longer Drifts After Tariff Refreshes
+
+- Network tariff refreshes now publish the recalculated import price to entities without rescheduling the coordinator's main polling timer, so KWatch current-price polling keeps running on schedule.
+- This fixes the regression where import and wholesale price sensors could sit flat for long periods even though the 5-minute tariff callback was still firing.
+- Added a regression check to keep the manual tariff refresh path separate from the main coordinator reschedule path.
+
+### Fix: Apex Forecast Arrays Accept ISO Timestamps Again
+
+- Forecast sensor timestamp parsing now accepts both the older slash-separated AEMO format and the ISO timestamps that Flow Power has started returning, restoring `apex_forecast_import` and `apex_forecast_wholesale` values.
+
+### Feature: Optional Happy Hour Export Rate Override
+
+- Added an optional `Happy Hour Export Rate ($/kWh)` setting for customers on non-standard plans, including 50 c/kWh variants, and applied the override consistently in both current export pricing and time-based calculations.
+
 ## v1.6.5
 
 ### Fix: KWatch API Key Setup Validation
