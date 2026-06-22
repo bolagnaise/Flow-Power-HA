@@ -32,6 +32,7 @@ from .const import (
     CONF_FLOWPOWER_API_KEY,
     CONF_FLOWPOWER_EMAIL,
     CONF_FLOWPOWER_NMI,
+    CONF_HAPPY_HOUR_EXPORT_RATE,
     CONF_FLOWPOWER_PASSWORD,
     CONF_FP_NETWORK,
     CONF_FP_TARIFF_CODE,
@@ -103,6 +104,7 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.base_rate = config.get(CONF_BASE_RATE, DEFAULT_BASE_RATE)
         self.pea_enabled = config.get(CONF_PEA_ENABLED, True)
         self.pea_custom_value = config.get(CONF_PEA_CUSTOM_VALUE)
+        self.happy_hour_export_rate = config.get(CONF_HAPPY_HOUR_EXPORT_RATE)
 
         # Network tariff config
         self._fp_network = config.get(CONF_FP_NETWORK)
@@ -210,13 +212,20 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._network_tariff_rate = rate
                 data = self._current_data_with_updated_tariff(rate)
                 if data is not None:
-                    self.async_set_updated_data(data)
+                    self._publish_manual_data_update(data)
                 _LOGGER.debug(
                     "Flow Power: Updated network tariff rate: %.4f c/kWh",
                     rate,
                 )
 
         self.hass.async_create_task(_refresh())
+
+    @callback
+    def _publish_manual_data_update(self, data: dict[str, Any]) -> None:
+        """Publish listener updates without rescheduling the main poll loop."""
+        self.data = data
+        self.last_update_success = True
+        self.async_update_listeners()
 
     def _current_data_with_updated_tariff(
         self,
@@ -537,7 +546,10 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # is configured. If it fails, fall through to the existing AEMO path.
             if self.fp_api_enabled:
                 if await self._fetch_kwatch_price_data(data):
-                    data["export_price"] = calculate_export_price(self.region)
+                    data["export_price"] = calculate_export_price(
+                        self.region,
+                        happy_hour_rate_override=self.happy_hour_export_rate,
+                    )
                     return data
 
             # Decide whether to hit NEMWEB this cycle.
@@ -545,7 +557,10 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             if not should_fetch:
                 # Export price is time-based — keep it current even in WAIT mode.
-                data["export_price"] = calculate_export_price(self.region)
+                data["export_price"] = calculate_export_price(
+                    self.region,
+                    happy_hour_rate_override=self.happy_hour_export_rate,
+                )
                 return data
 
             # Fetch current prices based on source
@@ -662,7 +677,10 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                 )
 
             # Export price is always recalculated (time-based)
-            data["export_price"] = calculate_export_price(self.region)
+            data["export_price"] = calculate_export_price(
+                self.region,
+                happy_hour_rate_override=self.happy_hour_export_rate,
+            )
 
             return data
 

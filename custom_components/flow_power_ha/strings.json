@@ -67,12 +67,14 @@
         "data": {
           "base_rate": "Base Rate (c/kWh)",
           "pea_enabled": "Enable PEA Calculation",
-          "pea_custom_value": "Custom PEA Value (c/kWh)"
+          "pea_custom_value": "Custom PEA Value (c/kWh)",
+          "happy_hour_export_rate": "Happy Hour Export Rate ($/kWh)"
         },
         "data_description": {
           "base_rate": "Your Flow Power base energy rate (GST inclusive)",
           "pea_enabled": "Apply Price Efficiency Adjustment (PEA = Wholesale - TWAP - 1.7c)",
-          "pea_custom_value": "Override calculated PEA with a fixed value"
+          "pea_custom_value": "Override calculated PEA with a fixed value",
+          "happy_hour_export_rate": "Optional override for plans with a non-standard Happy Hour export rate"
         }
       }
     },
@@ -100,6 +102,7 @@
           "base_rate": "Base Rate (c/kWh)",
           "pea_enabled": "Enable PEA Calculation",
           "pea_custom_value": "Custom PEA Value (c/kWh)",
+          "happy_hour_export_rate": "Happy Hour Export Rate ($/kWh)",
           "fp_network": "Electricity Distributor (DNSP)",
           "flowpower_api_key": "Flow Power API Key",
           "reauth_flowpower": "Re-authenticate with Flow Power portal",

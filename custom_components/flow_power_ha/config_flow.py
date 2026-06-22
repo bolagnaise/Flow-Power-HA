@@ -19,6 +19,7 @@ from .const import (
     CONF_FLOWPOWER_API_KEY,
     CONF_FLOWPOWER_EMAIL,
     CONF_FLOWPOWER_NMI,
+    CONF_HAPPY_HOUR_EXPORT_RATE,
     CONF_FLOWPOWER_PASSWORD,
     CONF_FP_NETWORK,
     CONF_FP_TARIFF_CODE,
@@ -447,6 +448,15 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         mode=selector.NumberSelectorMode.BOX,
                     )
                 ),
+                vol.Optional(CONF_HAPPY_HOUR_EXPORT_RATE): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=0,
+                        max=1,
+                        step=0.01,
+                        unit_of_measurement="$/kWh",
+                        mode=selector.NumberSelectorMode.BOX,
+                    )
+                ),
             }),
         )
 
@@ -566,6 +576,18 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
                     max=50,
                     step=0.01,
                     unit_of_measurement="c/kWh",
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            ),
+            vol.Optional(
+                CONF_HAPPY_HOUR_EXPORT_RATE,
+                description={"suggested_value": current.get(CONF_HAPPY_HOUR_EXPORT_RATE)},
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0,
+                    max=1,
+                    step=0.01,
+                    unit_of_measurement="$/kWh",
                     mode=selector.NumberSelectorMode.BOX,
                 )
             ),

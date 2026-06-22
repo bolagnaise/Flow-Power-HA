@@ -21,6 +21,7 @@ from .const import (
     CONF_FLOWPOWER_API_KEY,
     CONF_FLOWPOWER_EMAIL,
     CONF_FLOWPOWER_NMI,
+    CONF_HAPPY_HOUR_EXPORT_RATE,
     CONF_FP_NETWORK,
     CONF_NEM_REGION,
     CONF_PRICE_SOURCE,
@@ -173,7 +174,10 @@ class FlowPowerBaseSensor(CoordinatorEntity[FlowPowerCoordinator], SensorEntity)
             if "/" in timestamp:
                 dt = datetime.strptime(timestamp, "%Y/%m/%d %H:%M:%S")
                 return dt.replace(tzinfo=tz)
-            return None
+            dt = datetime.fromisoformat(timestamp)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=tz)
+            return dt
         except (ValueError, TypeError):
             return None
 
@@ -279,7 +283,16 @@ class FlowPowerExportPriceSensor(FlowPowerBaseSensor):
         local_time = dt.time()
         is_happy_hour = HAPPY_HOUR_START <= local_time < HAPPY_HOUR_END
         if is_happy_hour:
-            return FLOW_POWER_EXPORT_RATES.get(self._region, 0.0)
+            configured_rate = (
+                {**self._config_entry.data, **self._config_entry.options}.get(
+                    CONF_HAPPY_HOUR_EXPORT_RATE
+                )
+            )
+            return (
+                configured_rate
+                if configured_rate is not None
+                else FLOW_POWER_EXPORT_RATES.get(self._region, 0.0)
+            )
         return 0.0
 
     @property

@@ -117,6 +117,7 @@ CONF_NEM_REGION = "nem_region"
 CONF_BASE_RATE = "base_rate"
 CONF_PEA_ENABLED = "pea_enabled"
 CONF_PEA_CUSTOM_VALUE = "pea_custom_value"
+CONF_HAPPY_HOUR_EXPORT_RATE = "happy_hour_export_rate"
 
 # Flow Power Portal Configuration Keys
 CONF_FLOWPOWER_EMAIL = "flowpower_email"

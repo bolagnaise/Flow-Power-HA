@@ -161,6 +161,7 @@ def calculate_export_price(
     region: str,
     current_time: datetime | None = None,
     timezone: str | None = None,
+    happy_hour_rate_override: float | None = None,
 ) -> dict[str, Any]:
     """Calculate the export price based on Happy Hour and region.
 
@@ -171,6 +172,7 @@ def calculate_export_price(
         region: NEM region code (NSW1, QLD1, VIC1, SA1, TAS1)
         current_time: Optional datetime for testing (defaults to now)
         timezone: Optional timezone string (defaults based on region)
+        happy_hour_rate_override: Optional per-config Happy Hour rate in $/kWh
 
     Returns:
         Dict with export price info:
@@ -206,7 +208,11 @@ def calculate_export_price(
     is_happy_hour = HAPPY_HOUR_START <= local_time < HAPPY_HOUR_END
 
     # Get Happy Hour rate for region
-    happy_hour_rate = FLOW_POWER_EXPORT_RATES.get(region, 0.0)
+    happy_hour_rate = (
+        happy_hour_rate_override
+        if happy_hour_rate_override is not None
+        else FLOW_POWER_EXPORT_RATES.get(region, 0.0)
+    )
 
     # Calculate export price
     if is_happy_hour:

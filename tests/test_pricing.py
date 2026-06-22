@@ -15,7 +15,11 @@ package = types.ModuleType("flow_power_ha")
 package.__path__ = [str(COMPONENT_ROOT)]
 sys.modules.setdefault("flow_power_ha", package)
 
-from flow_power_ha.pricing import calculate_forecast_prices, calculate_import_price  # noqa: E402
+from flow_power_ha.pricing import (  # noqa: E402
+    calculate_export_price,
+    calculate_forecast_prices,
+    calculate_import_price,
+)
 from flow_power_ha.tariff_utils import _dispatch_interval_end  # noqa: E402
 from flow_power_ha.flow_power_api import FlowPowerAPIClient, FlowPowerAPIError  # noqa: E402
 
@@ -242,6 +246,18 @@ def test_forecast_tariff_lookup_uses_interval_start_slot() -> None:
     assert forecast[1]["network_tariff_rate"] == 9.0
 
 
+def test_export_price_supports_happy_hour_override() -> None:
+    price = calculate_export_price(
+        "QLD1",
+        current_time=datetime.fromisoformat("2026-06-16T18:00:00+10:00"),
+        happy_hour_rate_override=0.5,
+    )
+
+    assert price["happy_hour_rate"] == 0.5
+    assert price["export_cents"] == 50.0
+    assert price["export_dollars"] == 0.5
+
+
 def test_config_flow_and_coordinator_wire_kwatch_api_paths() -> None:
     config_flow_source = (COMPONENT_ROOT / "config_flow.py").read_text()
     coordinator_source = (COMPONENT_ROOT / "coordinator.py").read_text()
@@ -259,5 +275,8 @@ def test_config_flow_and_coordinator_wire_kwatch_api_paths() -> None:
     assert "predispatch30mins(" in coordinator_source
     assert "predispatch5mins(" in coordinator_source
     assert "get_residential_site_summary" in coordinator_source
+    assert "def _publish_manual_data_update" in coordinator_source
+    assert "self.async_update_listeners()" in coordinator_source
+    assert "self._publish_manual_data_update(data)" in coordinator_source
     assert "CONF_FLOWPOWER_API_KEY" in sensor_source
     assert "CONF_FLOWPOWER_NMI" in sensor_source
