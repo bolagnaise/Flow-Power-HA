@@ -14,6 +14,7 @@ from .const import (
     HAPPY_HOUR_END,
     HAPPY_HOUR_START,
 )
+from .flow_power_pricing import FlowPowerPricingContext, calculate_flow_power_pea
 
 
 def calculate_pea(
@@ -21,6 +22,7 @@ def calculate_pea(
     twap: float | None = None,
     network_tariff_rate: float | None = None,
     avg_daily_tariff: float | None = None,
+    pricing_context: FlowPowerPricingContext | None = None,
 ) -> float:
     """Calculate the Price Efficiency Adjustment (PEA).
 
@@ -47,6 +49,14 @@ def calculate_pea(
     Returns:
         PEA value in c/kWh (can be negative)
     """
+    if pricing_context is not None:
+        return calculate_flow_power_pea(
+            wholesale_cents,
+            pricing_context,
+            tariff_rate=network_tariff_rate,
+            avg_daily_tariff=avg_daily_tariff,
+        )
+
     market_avg = twap if twap is not None else FLOW_POWER_MARKET_AVG
 
     if network_tariff_rate is not None and avg_daily_tariff is not None:
@@ -71,6 +81,7 @@ def calculate_import_price(
     twap: float | None = None,
     network_tariff_rate: float | None = None,
     avg_daily_tariff: float | None = None,
+    pricing_context: FlowPowerPricingContext | None = None,
 ) -> dict[str, float]:
     """Calculate the final import price using Flow Power PEA formula.
 
@@ -103,7 +114,11 @@ def calculate_import_price(
             'avg_daily_tariff': 4.2,     # Avg daily tariff (None if not provided)
         }
     """
-    twap_used = twap if twap is not None else FLOW_POWER_MARKET_AVG
+    twap_used = (
+        pricing_context.twap
+        if pricing_context is not None
+        else twap if twap is not None else FLOW_POWER_MARKET_AVG
+    )
 
     result: dict[str, Any] = {
         "wholesale": wholesale_cents,
@@ -115,6 +130,14 @@ def calculate_import_price(
         "network_tou_adjustment": None,
         "price_without_network_tou_adjustment_cents": None,
         "price_without_network_tou_adjustment_dollars": None,
+        "twap_source": pricing_context.twap_source if pricing_context else (
+            "dynamic" if twap is not None else "fallback"
+        ),
+        "bpea": pricing_context.bpea if pricing_context else FLOW_POWER_BENCHMARK,
+        "bpea_source": pricing_context.bpea_source if pricing_context else "default",
+        "gst_multiplier": pricing_context.gst_multiplier if pricing_context else FLOW_POWER_GST,
+        "gst_source": pricing_context.gst_source if pricing_context else "default",
+        "portal_pricing_active": pricing_context.portal_active if pricing_context else False,
         "final_cents": 0.0,
         "final_dollars": 0.0,
     }
@@ -129,6 +152,7 @@ def calculate_import_price(
                 twap=twap,
                 network_tariff_rate=network_tariff_rate,
                 avg_daily_tariff=avg_daily_tariff,
+                pricing_context=pricing_context,
             )
 
         result["pea"] = pea
@@ -239,6 +263,7 @@ def calculate_forecast_prices(
     twap: float | None = None,
     tariff_schedule: dict[int, float] | None = None,
     avg_daily_tariff: float | None = None,
+    pricing_context: FlowPowerPricingContext | None = None,
 ) -> list[dict[str, Any]]:
     """Calculate import prices for a forecast array.
 
@@ -302,6 +327,7 @@ def calculate_forecast_prices(
             twap=twap,
             network_tariff_rate=network_tariff_rate,
             avg_daily_tariff=avg_daily_tariff,
+            pricing_context=pricing_context,
         )
 
         # Extract timestamp
@@ -314,6 +340,11 @@ def calculate_forecast_prices(
             "wholesale_cents": wholesale_cents,
             "pea": price_info["pea"],
             "network_tariff_rate": network_tariff_rate,
+            "twap_used": price_info["twap_used"],
+            "twap_source": price_info["twap_source"],
+            "bpea": price_info["bpea"],
+            "bpea_source": price_info["bpea_source"],
+            "gst_multiplier": price_info["gst_multiplier"],
         })
 
     return results

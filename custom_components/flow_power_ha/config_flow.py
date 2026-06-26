@@ -23,6 +23,7 @@ from .const import (
     CONF_FLOWPOWER_PASSWORD,
     CONF_FP_NETWORK,
     CONF_FP_TARIFF_CODE,
+    CONF_FP_TWAP_OVERRIDE,
     CONF_NEM_REGION,
     CONF_PEA_CUSTOM_VALUE,
     CONF_PEA_ENABLED,
@@ -420,6 +421,8 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Handle pricing configuration."""
         if user_input is not None:
+            if not user_input.get(CONF_FP_TWAP_OVERRIDE):
+                user_input[CONF_FP_TWAP_OVERRIDE] = None
             self._data.update(user_input)
 
             # Create the entry
@@ -443,6 +446,15 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     selector.NumberSelectorConfig(
                         min=-50,
                         max=50,
+                        step=0.01,
+                        unit_of_measurement="c/kWh",
+                        mode=selector.NumberSelectorMode.BOX,
+                    )
+                ),
+                vol.Optional(CONF_FP_TWAP_OVERRIDE): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=0,
+                        max=100,
                         step=0.01,
                         unit_of_measurement="c/kWh",
                         mode=selector.NumberSelectorMode.BOX,
@@ -485,6 +497,8 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             # Save form data — needed if we branch to reauth then come back
             wants_reauth = user_input.pop("reauth_flowpower", False) or user_input.pop("connect_flowpower", False)
+            if not user_input.get(CONF_FP_TWAP_OVERRIDE):
+                user_input[CONF_FP_TWAP_OVERRIDE] = None
             api_key = user_input.get(CONF_FLOWPOWER_API_KEY, "")
             if isinstance(api_key, str):
                 api_key = api_key.strip()
@@ -574,6 +588,18 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
                 selector.NumberSelectorConfig(
                     min=-50,
                     max=50,
+                    step=0.01,
+                    unit_of_measurement="c/kWh",
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            ),
+            vol.Optional(
+                CONF_FP_TWAP_OVERRIDE,
+                description={"suggested_value": current.get(CONF_FP_TWAP_OVERRIDE)},
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0,
+                    max=100,
                     step=0.01,
                     unit_of_measurement="c/kWh",
                     mode=selector.NumberSelectorMode.BOX,

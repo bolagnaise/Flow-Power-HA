@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import time as time_mod
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any
 
 import aiohttp
@@ -58,6 +59,7 @@ from .pricing import (
     calculate_forecast_prices,
     calculate_import_price,
 )
+from .flow_power_pricing import FlowPowerPricingContext, resolve_flow_power_pricing_context
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -251,11 +253,22 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             base_rate=self.base_rate,
             pea_enabled=self.pea_enabled,
             pea_custom_value=self.pea_custom_value,
-            twap=self._twap,
             network_tariff_rate=network_tariff_rate,
             avg_daily_tariff=self._avg_daily_tariff,
+            pricing_context=self._pricing_context(),
         )
         return data
+
+    def _pricing_context(self) -> FlowPowerPricingContext:
+        """Resolve the effective Flow Power pricing inputs for this update."""
+        return resolve_flow_power_pricing_context(
+            self.config,
+            {},
+            {
+                "flow_power_twap_tracker": SimpleNamespace(twap=self._twap),
+                "flow_power_portal_data": self._fp_data,
+            },
+        )
 
     # ------------------------------------------------------------------
     # Adaptive polling helpers
@@ -592,18 +605,16 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     data["twap_days"] = self._get_twap_days()
                     data["twap_samples"] = len(self._price_history)
 
-                    # PEA requires the raw wholesale TWAP. Portal TWAP is an
-                    # account metric and can include customer/network effects.
-                    twap_for_calc = self._twap
+                    pricing_context = self._pricing_context()
 
                     import_info = calculate_import_price(
                         wholesale_cents=wholesale_cents,
                         base_rate=self.base_rate,
                         pea_enabled=self.pea_enabled,
                         pea_custom_value=self.pea_custom_value,
-                        twap=twap_for_calc,
                         network_tariff_rate=self._network_tariff_rate,
                         avg_daily_tariff=self._avg_daily_tariff,
+                        pricing_context=pricing_context,
                     )
 
                     data["import_price"] = import_info
@@ -622,7 +633,6 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     # the predispatch endpoint every second during ACTIVE mode.
                     # The predispatch file itself only updates every ~30 minutes
                     # so the filename cache in AEMOClient handles deduplication.
-                    twap_for_forecast = twap_for_calc
                     forecast_raw, _is_new_pd, _pd_file = (
                         await self._aemo_client.get_price_forecast_with_file(
                             self.region, periods=96
@@ -640,9 +650,9 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             base_rate=self.base_rate,
                             pea_enabled=self.pea_enabled,
                             pea_custom_value=self.pea_custom_value,
-                            twap=twap_for_forecast,
                             tariff_schedule=self._tariff_schedule,
                             avg_daily_tariff=self._avg_daily_tariff,
+                            pricing_context=pricing_context,
                         )
                         _LOGGER.info("Calculated forecast periods: %d", len(data["forecast"]))
 
@@ -700,9 +710,10 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         api_region = FLOWPOWER_KWATCH_REGIONS.get(self.region, self.region.lower())
         try:
             dispatch = await self._fp_api_client.dispatch5mins(api_region, period=60)
+            # Keep the first upcoming half-hour slot; period=2 skips it.
             forecast_30 = await self._fp_api_client.predispatch30mins(
                 api_region,
-                period=2,
+                period=1,
             )
             forecast_5 = await self._fp_api_client.predispatch5mins(
                 api_region,
@@ -728,15 +739,16 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         data["twap"] = self._twap
         data["twap_days"] = self._get_twap_days()
         data["twap_samples"] = len(self._price_history)
+        pricing_context = self._pricing_context()
 
         import_info = calculate_import_price(
             wholesale_cents=wholesale_cents,
             base_rate=self.base_rate,
             pea_enabled=self.pea_enabled,
             pea_custom_value=self.pea_custom_value,
-            twap=self._twap,
             network_tariff_rate=self._network_tariff_rate,
             avg_daily_tariff=self._avg_daily_tariff,
+            pricing_context=pricing_context,
         )
 
         data["import_price"] = import_info
@@ -758,9 +770,9 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 base_rate=self.base_rate,
                 pea_enabled=self.pea_enabled,
                 pea_custom_value=self.pea_custom_value,
-                twap=self._twap,
                 tariff_schedule=self._tariff_schedule,
                 avg_daily_tariff=self._avg_daily_tariff,
+                pricing_context=pricing_context,
             )
 
         self._next_boundary = self._calc_next_boundary()

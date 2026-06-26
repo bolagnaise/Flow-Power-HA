@@ -23,6 +23,7 @@ FLOW_POWER_GST = 1.1
 # Network tariff configuration keys
 CONF_FP_NETWORK = "fp_network"
 CONF_FP_TARIFF_CODE = "fp_tariff_code"
+CONF_FP_TWAP_OVERRIDE = "fp_twap_override"
 
 # NEM region → list of DNSP display names
 REGION_NETWORKS = {

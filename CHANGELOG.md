@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.6.7
+
+### Fix: PowerSync-Aligned Flow Power Pricing
+
+- Import price and forecast calculations now use the same Flow Power pricing input priority as PowerSync: TWAP override, KWatch/portal account TWAP, rolling TWAP, then fallback constants.
+- Added an optional TWAP override setting and import price attributes showing the active TWAP, BPEA, GST, and pricing source for easier troubleshooting.
+- KWatch runtime forecasts keep requesting the first upcoming half-hour slot so forecast attributes start at the next slot instead of skipping ahead.
+- Added pricing regression coverage for the PowerSync-compatible helper path.
+
 ## v1.6.6
 
 ### Fix: KWatch Polling No Longer Drifts After Tariff Refreshes

@@ -224,6 +224,12 @@ class FlowPowerImportPriceSensor(FlowPowerBaseSensor):
                 "pea_cents": price_info.get("pea"),
                 "wholesale_cents": price_info.get("wholesale"),
                 "twap_used": price_info.get("twap_used"),
+                "twap_source": price_info.get("twap_source"),
+                "bpea_cents": price_info.get("bpea"),
+                "bpea_source": price_info.get("bpea_source"),
+                "gst_multiplier": price_info.get("gst_multiplier"),
+                "gst_source": price_info.get("gst_source"),
+                "portal_pricing_active": price_info.get("portal_pricing_active"),
                 "network_cents": price_info.get("network_tariff_rate"),
                 "avg_daily_tariff": price_info.get("avg_daily_tariff"),
                 "network_tou_adjustment_cents": price_info.get(

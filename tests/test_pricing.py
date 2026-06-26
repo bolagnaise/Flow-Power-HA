@@ -6,6 +6,7 @@ import sys
 import types
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +20,10 @@ from flow_power_ha.pricing import (  # noqa: E402
     calculate_export_price,
     calculate_forecast_prices,
     calculate_import_price,
+)
+from flow_power_ha.flow_power_pricing import (  # noqa: E402
+    calculate_flow_power_pea,
+    resolve_flow_power_pricing_context,
 )
 from flow_power_ha.tariff_utils import _dispatch_interval_end  # noqa: E402
 from flow_power_ha.flow_power_api import FlowPowerAPIClient, FlowPowerAPIError  # noqa: E402
@@ -79,6 +84,89 @@ def test_import_price_exposes_network_tou_adjustment() -> None:
     assert price["network_tou_adjustment"] == 4.5
     assert price["price_without_network_tou_adjustment_cents"] == 43.3
     assert price["price_without_network_tou_adjustment_dollars"] == 0.433
+
+
+def test_pricing_context_uses_account_import_values() -> None:
+    context = resolve_flow_power_pricing_context(
+        options={},
+        data={},
+        domain_data={
+            "flow_power_twap_tracker": SimpleNamespace(twap=8.25),
+            "flow_power_portal_data": {
+                "twap": 21.0,
+                "twap_import": 20.5,
+                "bpea": 2.3,
+                "bpea_import": 2.1,
+                "gst_multiplier": 1.2,
+            },
+        },
+    )
+
+    assert context.twap == 20.5
+    assert context.twap_source == "portal"
+    assert context.bpea == 2.1
+    assert context.bpea_source == "portal"
+    assert context.gst_multiplier == 1.2
+    assert round(
+        calculate_flow_power_pea(
+            20.0,
+            context,
+            tariff_rate=12.0,
+            avg_daily_tariff=5.0,
+        ),
+        2,
+    ) == 4.3
+
+
+def test_pricing_context_uses_override_before_account_twap() -> None:
+    context = resolve_flow_power_pricing_context(
+        options={"fp_twap_override": 12.34},
+        data={},
+        domain_data={
+            "flow_power_twap_tracker": SimpleNamespace(twap=8.25),
+            "flow_power_portal_data": {
+                "twap_import": 20.5,
+                "bpea_import": 2.1,
+                "gst_multiplier": 1.1,
+            },
+        },
+    )
+
+    assert context.twap == 12.34
+    assert context.twap_source == "override"
+    assert context.bpea == 2.1
+
+
+def test_import_price_uses_portal_aware_pricing_context() -> None:
+    context = resolve_flow_power_pricing_context(
+        options={},
+        data={},
+        domain_data={
+            "flow_power_twap_tracker": SimpleNamespace(twap=11.49),
+            "flow_power_portal_data": {
+                "twap": 21.02,
+                "twap_import": 21.02,
+                "bpea_import": 1.7,
+                "gst_multiplier": 1.1,
+            },
+        },
+    )
+
+    price = calculate_import_price(
+        wholesale_cents=11.02,
+        base_rate=34.0,
+        network_tariff_rate=5.85,
+        avg_daily_tariff=10.48,
+        pricing_context=context,
+    )
+
+    assert price["twap_used"] == 21.02
+    assert price["twap_source"] == "portal"
+    assert price["bpea"] == 1.7
+    assert price["bpea_source"] == "portal"
+    assert price["gst_multiplier"] == 1.1
+    assert round(price["pea"], 2) == -17.33
+    assert price["final_cents"] == 16.67
 
 
 def test_dispatch_interval_end_uses_next_five_minute_boundary() -> None:
@@ -272,9 +360,11 @@ def test_config_flow_and_coordinator_wire_kwatch_api_paths() -> None:
     assert "async_step_flowpower_site_options" in config_flow_source
     assert "FlowPowerAPIClient(self.fp_api_key" in coordinator_source
     assert "dispatch5mins(api_region, period=60)" in coordinator_source
-    assert "predispatch30mins(" in coordinator_source
+    assert "predispatch30mins(\n                api_region,\n                period=1," in coordinator_source
     assert "predispatch5mins(" in coordinator_source
     assert "get_residential_site_summary" in coordinator_source
+    assert "resolve_flow_power_pricing_context" in coordinator_source
+    assert "pricing_context=pricing_context" in coordinator_source
     assert "def _publish_manual_data_update" in coordinator_source
     assert "self.async_update_listeners()" in coordinator_source
     assert "self._publish_manual_data_update(data)" in coordinator_source
