@@ -52,7 +52,7 @@ from .const import (
     UPDATE_INTERVAL_CURRENT,
     UPDATE_INTERVAL_FLOWPOWER,
 )
-from .flow_power_api import FlowPowerAPIClient
+from .flow_power_api import FlowPowerAPIClient, merge_price_forecasts
 from .tariff_utils import compute_avg_daily_tariff, get_network_tariff_rate
 from .pricing import (
     calculate_export_price,
@@ -763,7 +763,7 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if len(self._import_price_history) > 576:
                 self._import_price_history = self._import_price_history[-576:]
 
-        forecast_raw = forecast_30 or forecast_5
+        forecast_raw = merge_price_forecasts(forecast_5, forecast_30)
         if forecast_raw:
             data["forecast"] = calculate_forecast_prices(
                 forecast_raw,

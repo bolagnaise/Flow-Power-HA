@@ -26,7 +26,11 @@ from flow_power_ha.flow_power_pricing import (  # noqa: E402
     resolve_flow_power_pricing_context,
 )
 from flow_power_ha.tariff_utils import _dispatch_interval_end  # noqa: E402
-from flow_power_ha.flow_power_api import FlowPowerAPIClient, FlowPowerAPIError  # noqa: E402
+from flow_power_ha.flow_power_api import (  # noqa: E402
+    FlowPowerAPIClient,
+    FlowPowerAPIError,
+    merge_price_forecasts,
+)
 
 
 class _FakeResponse:
@@ -116,6 +120,37 @@ def test_pricing_context_uses_account_import_values() -> None:
         ),
         2,
     ) == 4.3
+
+
+def test_import_price_prefers_portal_account_twap_over_tracker() -> None:
+    price = calculate_import_price(
+        wholesale_cents=20.0,
+        base_rate=34.0,
+        twap=8.25,
+        network_tariff_rate=12.0,
+        avg_daily_tariff=5.0,
+        pricing_context=resolve_flow_power_pricing_context(
+            options={},
+            data={},
+            domain_data={
+                "flow_power_twap_tracker": SimpleNamespace(twap=8.25),
+                "flow_power_portal_data": {
+                    "twap": 21.0,
+                    "twap_import": 20.5,
+                    "bpea": 2.3,
+                    "bpea_import": 2.1,
+                    "gst_multiplier": 1.2,
+                },
+            },
+        ),
+    )
+
+    assert price["twap_used"] == 20.5
+    assert price["twap_source"] == "portal"
+    assert price["bpea"] == 2.1
+    assert price["gst_multiplier"] == 1.2
+    assert round(price["pea"], 2) == 4.3
+    assert round(price["final_cents"], 2) == 38.3
 
 
 def test_pricing_context_uses_override_before_account_twap() -> None:
@@ -314,6 +349,31 @@ def test_flowpower_price_endpoints_can_work_when_site_lookup_fails() -> None:
     ]
 
 
+def test_merge_price_forecasts_keeps_near_5_minute_slots() -> None:
+    merged = merge_price_forecasts(
+        [
+            {"nemTime": "2026-06-26T06:45:00+10:00", "perKwh": 10.0, "duration": 5},
+            {"nemTime": "2026-06-26T06:50:00+10:00", "perKwh": 11.0, "duration": 5},
+            {"nemTime": "2026-06-26T06:55:00+10:00", "perKwh": 12.0, "duration": 5},
+            {"nemTime": "2026-06-26T07:30:00+10:00", "perKwh": 13.0, "duration": 5},
+        ],
+        [
+            {"nemTime": "2026-06-26T07:30:00+10:00", "perKwh": 99.0, "duration": 30},
+            {"nemTime": "2026-06-26T08:00:00+10:00", "perKwh": 88.0, "duration": 30},
+        ],
+    )
+
+    assert [entry["nemTime"] for entry in merged] == [
+        "2026-06-26T06:45:00+10:00",
+        "2026-06-26T06:50:00+10:00",
+        "2026-06-26T06:55:00+10:00",
+        "2026-06-26T07:30:00+10:00",
+        "2026-06-26T08:00:00+10:00",
+    ]
+    assert merged[3]["perKwh"] == 13.0
+    assert merged[3]["duration"] == 5
+
+
 def test_forecast_tariff_lookup_uses_interval_start_slot() -> None:
     forecast = calculate_forecast_prices(
         [
@@ -362,6 +422,7 @@ def test_config_flow_and_coordinator_wire_kwatch_api_paths() -> None:
     assert "dispatch5mins(api_region, period=60)" in coordinator_source
     assert "predispatch30mins(\n                api_region,\n                period=1," in coordinator_source
     assert "predispatch5mins(" in coordinator_source
+    assert "merge_price_forecasts(forecast_5, forecast_30)" in coordinator_source
     assert "get_residential_site_summary" in coordinator_source
     assert "resolve_flow_power_pricing_context" in coordinator_source
     assert "pricing_context=pricing_context" in coordinator_source

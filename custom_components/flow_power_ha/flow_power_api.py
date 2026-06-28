@@ -18,6 +18,34 @@ class FlowPowerAPIError(Exception):
     """Raised when the Flow Power API returns an unusable response."""
 
 
+def merge_price_forecasts(
+    *forecast_sets: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Merge forecast arrays by timestamp, preferring finer-grained records."""
+    merged: dict[str, dict[str, Any]] = {}
+
+    for forecast_set in forecast_sets:
+        for record in forecast_set:
+            timestamp = record.get("nemTime") or record.get("startTime")
+            if not isinstance(timestamp, str) or not timestamp:
+                continue
+
+            existing = merged.get(timestamp)
+            if existing is None:
+                merged[timestamp] = record
+                continue
+
+            existing_duration = int(existing.get("duration", 30) or 30)
+            candidate_duration = int(record.get("duration", 30) or 30)
+            if candidate_duration < existing_duration:
+                merged[timestamp] = record
+
+    return sorted(
+        merged.values(),
+        key=lambda item: item.get("nemTime") or item.get("startTime") or "",
+    )
+
+
 class FlowPowerAPIClient:
     """Client for Flow Power's KWatch API."""
 

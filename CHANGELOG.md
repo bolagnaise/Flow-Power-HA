@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.6.8
+
+### Fix: KWatch Forecast Keeps The Next Upcoming Slot
+
+- KWatch forecast updates now merge the 5-minute and 30-minute predispatch feeds instead of letting the 30-minute feed replace the finer-grained near-term data.
+- This restores the missing next forecast slot reported in `#21` while still keeping the later half-hour forecast periods.
+- Added regression coverage to keep the near-slot merge behavior locked in.
+
+### Docs: Clarify Flow Power Pricing Input Priority
+
+- Updated the README to match the shipped `v1.6.7` behavior: Flow Power import and forecast pricing now follows the same input priority as PowerSync.
+- Added a direct regression test for the import-price path so portal/account `twap_import` remains the preferred input over the rolling wholesale TWAP when both are available.
+
 ## v1.6.7
 
 ### Fix: PowerSync-Aligned Flow Power Pricing

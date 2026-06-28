@@ -57,7 +57,7 @@ Your tariff code is listed on your electricity bill under "tariff" or "network t
 
 ### Flow Power Portal
 
-The Flow Power portal provides **actual account-specific** values directly from Flow Power's billing system, rather than calculated estimates. Portal metrics are exposed through the account sensors. Import price and forecast PEA calculations continue to use the integration's rolling raw wholesale TWAP, because the portal TWAP is an account metric and may include customer/network effects.
+The Flow Power portal provides **actual account-specific** values directly from Flow Power's billing system, rather than calculated estimates. Portal metrics are exposed through the account sensors. Import price and forecast PEA calculations follow the same pricing-input priority as PowerSync: manual TWAP override first, then Flow Power account import TWAP from KWatch/portal data, then the integration's rolling wholesale TWAP, then the fallback constants.
 
 #### Setup during initial configuration
 
