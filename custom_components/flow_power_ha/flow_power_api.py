@@ -141,6 +141,67 @@ class FlowPowerAPIClient:
         return []
 
     @staticmethod
+    def _mapping_price_records(payload: Any) -> list[dict[str, Any]]:
+        """Extract timestamp->price mappings from nested endpoint payloads."""
+        if isinstance(payload, list):
+            for item in payload:
+                records = FlowPowerAPIClient._mapping_price_records(item)
+                if records:
+                    return records
+            return []
+
+        if not isinstance(payload, dict):
+            return []
+
+        records: list[dict[str, Any]] = []
+        for key, value in payload.items():
+            timestamp = FlowPowerAPIClient._parse_time(key)
+            if timestamp is None:
+                continue
+
+            price = None
+            if isinstance(value, dict):
+                price = FlowPowerAPIClient._first_number(
+                    value,
+                    "price",
+                    "Price",
+                    "priceMwh",
+                    "price_mwh",
+                    "rrp",
+                    "RRP",
+                    "Rrp",
+                    "value",
+                    "Value",
+                    "dispatchPrice",
+                    "DispatchPrice",
+                )
+            else:
+                try:
+                    price = float(value)
+                except (TypeError, ValueError):
+                    price = None
+
+            if price is None or not isfinite(price):
+                continue
+
+            records.append({"key": key, "price": price, "raw": value})
+
+        if records:
+            records.sort(
+                key=lambda item: (
+                    FlowPowerAPIClient._parse_time(item["key"])
+                    or datetime.min.replace(tzinfo=timezone.utc)
+                )
+            )
+            return records
+
+        for value in payload.values():
+            records = FlowPowerAPIClient._mapping_price_records(value)
+            if records:
+                return records
+        return []
+
+    @staticmethod
     def _normalize_key(key: str) -> str:
         """Normalize API keys for case/underscore-insensitive lookup."""
         return "".join(ch for ch in key.lower() if ch.isalnum())
@@ -401,6 +462,10 @@ class FlowPowerAPIClient:
                 inferred_timestamps,
                 len(normalized),
             )
+        if not normalized:
+            mapped_records = self._mapping_price_records(payload)
+            if mapped_records and mapped_records != records:
+                return self._normalize_price_records(mapped_records, duration=duration)
         normalized.sort(key=lambda item: item["nemTime"])
         return normalized
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.6.9
+
+### Fix: KWatch 5-Minute Forecast Mapping Payloads
+
+- KWatch forecast parsing now accepts timestamp-keyed price maps as well as list-based payloads, so the 5-minute predispatch feed is not silently dropped when Flow Power returns an object map.
+- This hardens the `#21` forecast fix by keeping near-term 5-minute slots available for the merged forecast even when the API response shape differs from the 30-minute feed.
+- Added regression coverage for timestamp-to-price `predispatch5mins` payloads.
+
 ## v1.6.8
 
 ### Fix: KWatch Forecast Keeps The Next Upcoming Slot

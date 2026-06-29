@@ -374,6 +374,31 @@ def test_merge_price_forecasts_keeps_near_5_minute_slots() -> None:
     assert merged[3]["duration"] == 5
 
 
+def test_flowpower_api_client_reads_timestamp_price_mappings() -> None:
+    session = _FakeSession(
+        {
+            "predispatch5mins": {
+                "data": {
+                    "2026-06-23T06:45:00+10:00": 100.0,
+                    "2026-06-23T06:50:00+10:00": 110.0,
+                    "2026-06-23T06:55:00+10:00": 120.0,
+                }
+            }
+        }
+    )
+    client = FlowPowerAPIClient("secret-key", session)  # type: ignore[arg-type]
+
+    forecast = asyncio.run(client.predispatch5mins("nsw", period=60))
+
+    assert [entry["nemTime"] for entry in forecast] == [
+        "2026-06-23T06:45:00+10:00",
+        "2026-06-23T06:50:00+10:00",
+        "2026-06-23T06:55:00+10:00",
+    ]
+    assert [entry["perKwh"] for entry in forecast] == [10.0, 11.0, 12.0]
+    assert all(entry["duration"] == 5 for entry in forecast)
+
+
 def test_forecast_tariff_lookup_uses_interval_start_slot() -> None:
     forecast = calculate_forecast_prices(
         [
