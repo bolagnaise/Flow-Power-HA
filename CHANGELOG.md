@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.6.10
+
+### Fix: Apex Forecast Series Align To The Priced Interval
+
+- Forecast records now retain each slot duration so the prebuilt `apex_forecast_import` and `apex_forecast_wholesale` series can shift interval-end timestamps back to the interval start without changing the existing `forecast_dict` keys.
+- This corrects the Apex chart timing drift reported in `#25`, including mixed 30-minute and 5-minute forecast slots.
+- Added regression coverage for the interval-start Apex series output.
+
+### Fix: Prefer Non-Zero Account BPEA For Import Pricing
+
+- Flow Power account pricing now falls back from a zero `bpea_import`/`PEATargetImport` value to the broader account `bpea`/`PEATarget` value when the import-specific field is present but unusable.
+- This restores the expected account pricing path for the `#23` / `#26` reports where KWatch site summaries were returning `0.0` for the import-specific benchmark.
+- Added regression coverage for the zero-import-BPEA fallback path.
+
 ## v1.6.9
 
 ### Fix: KWatch 5-Minute Forecast Mapping Payloads

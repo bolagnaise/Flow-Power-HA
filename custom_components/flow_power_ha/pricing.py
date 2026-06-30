@@ -335,6 +335,7 @@ def calculate_forecast_prices(
 
         results.append({
             "timestamp": timestamp,
+            "duration_minutes": int(period.get("duration", 30) or 30),
             "price_dollars": price_info["final_dollars"],
             "price_cents": price_info["final_cents"],
             "wholesale_cents": wholesale_cents,

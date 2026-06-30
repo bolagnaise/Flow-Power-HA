@@ -66,6 +66,18 @@ def _portal_data(domain_data: Mapping[str, Any]) -> Mapping[str, Any]:
     return data if isinstance(data, Mapping) else {}
 
 
+def _preferred_portal_bpea(portal: Mapping[str, Any]) -> float | None:
+    """Pick the most reliable portal/API BPEA value for import pricing."""
+    bpea_import = _as_float(portal.get("bpea_import"))
+    bpea = _as_float(portal.get("bpea"))
+
+    if bpea_import is not None and bpea_import > 0:
+        return bpea_import
+    if bpea is not None:
+        return bpea
+    return bpea_import
+
+
 def resolve_flow_power_pricing_context(
     options: Mapping[str, Any] | None,
     data: Mapping[str, Any] | None,
@@ -104,7 +116,7 @@ def resolve_flow_power_pricing_context(
         twap = FLOW_POWER_MARKET_AVG
         twap_source = "fallback"
 
-    portal_bpea = _first_number(portal.get("bpea_import"), portal.get("bpea"))
+    portal_bpea = _preferred_portal_bpea(portal)
     if portal_bpea is not None:
         bpea = portal_bpea
         bpea_source = "portal"

@@ -204,6 +204,37 @@ def test_import_price_uses_portal_aware_pricing_context() -> None:
     assert price["final_cents"] == 16.67
 
 
+def test_pricing_context_falls_back_to_general_bpea_when_import_bpea_is_zero() -> None:
+    context = resolve_flow_power_pricing_context(
+        options={},
+        data={},
+        domain_data={
+            "flow_power_twap_tracker": SimpleNamespace(twap=11.49),
+            "flow_power_portal_data": {
+                "twap": 18.56,
+                "twap_import": 18.56,
+                "bpea": 2.057245,
+                "bpea_import": 0.0,
+                "gst_multiplier": 1.1,
+            },
+        },
+    )
+
+    price = calculate_import_price(
+        wholesale_cents=7.527,
+        base_rate=34.0,
+        network_tariff_rate=5.1535,
+        avg_daily_tariff=11.1764,
+        pricing_context=context,
+    )
+
+    assert context.bpea == 2.057245
+    assert context.bpea_source == "portal"
+    assert price["bpea"] == 2.057245
+    assert round(price["pea"], 2) == -20.22
+    assert price["final_cents"] == 13.78
+
+
 def test_dispatch_interval_end_uses_next_five_minute_boundary() -> None:
     assert _dispatch_interval_end(
         datetime(2026, 5, 27, 10, 0, 5, 123456, tzinfo=timezone.utc)

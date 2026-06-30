@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -180,6 +180,24 @@ class FlowPowerBaseSensor(CoordinatorEntity[FlowPowerCoordinator], SensorEntity)
             return dt
         except (ValueError, TypeError):
             return None
+
+    def _forecast_period_start(
+        self,
+        timestamp: str,
+        duration_minutes: int | None,
+    ) -> datetime | None:
+        """Return the start time for a forecast interval.
+
+        Flow Power forecast timestamps identify the end of the priced interval.
+        ApexCharts series read more naturally when plotted at the interval being
+        priced, so shift the rendered point back by the record duration.
+        """
+        dt = self._parse_timestamp_to_datetime(timestamp)
+        if dt is None:
+            return None
+
+        minutes = duration_minutes if duration_minutes and duration_minutes > 0 else 30
+        return dt - timedelta(minutes=minutes)
 
 
 class FlowPowerImportPriceSensor(FlowPowerBaseSensor):
@@ -482,7 +500,10 @@ class FlowPowerForecastSensor(FlowPowerBaseSensor):
             apex_wholesale = []
             for period in forecast:
                 raw_ts = period.get("timestamp", "")
-                dt = self._parse_timestamp_to_datetime(raw_ts)
+                dt = self._forecast_period_start(
+                    raw_ts,
+                    period.get("duration_minutes"),
+                )
                 if dt:
                     epoch_ms = int(dt.timestamp() * 1000)
                     apex_import.append(
