@@ -235,6 +235,43 @@ def test_pricing_context_falls_back_to_general_bpea_when_import_bpea_is_zero() -
     assert price["final_cents"] == 13.78
 
 
+def test_price_without_network_tou_adjustment_preserves_account_inputs() -> None:
+    context = resolve_flow_power_pricing_context(
+        options={},
+        data={},
+        domain_data={
+            "flow_power_twap_tracker": SimpleNamespace(twap=11.49),
+            "flow_power_portal_data": {
+                "twap": 18.56,
+                "twap_import": 18.56,
+                "bpea": 2.057245,
+                "bpea_import": 2.057245,
+                "gst_multiplier": 1.1,
+            },
+        },
+    )
+
+    price = calculate_import_price(
+        wholesale_cents=7.527,
+        base_rate=34.0,
+        network_tariff_rate=5.1535,
+        avg_daily_tariff=11.1764,
+        pricing_context=context,
+    )
+
+    assert price["network_tou_adjustment"] == -6.0229
+    assert price["price_without_network_tou_adjustment_cents"] == 19.81
+    assert price["final_cents"] == 13.78
+    assert round(
+        price["price_without_network_tou_adjustment_cents"]
+        - price["final_cents"],
+        4,
+    ) == 6.03
+    assert price["twap_used"] == 18.56
+    assert price["bpea"] == 2.057245
+    assert price["gst_multiplier"] == 1.1
+
+
 def test_dispatch_interval_end_uses_next_five_minute_boundary() -> None:
     assert _dispatch_interval_end(
         datetime(2026, 5, 27, 10, 0, 5, 123456, tzinfo=timezone.utc)

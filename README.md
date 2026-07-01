@@ -261,6 +261,8 @@ Network TOU adjustment = Network Tariff Rate - Avg Daily Tariff
 
 If the Flow Power app's **Price of energy** differs by roughly this amount, compare it with the sensor attributes `network_tou_adjustment_cents` and `price_without_network_tou_adjustment_cents`. The app display can omit or smooth the current network TOU adjustment, while the import price sensor is the current complete import estimate used for automation.
 
+`price_without_network_tou_adjustment_cents` removes only the current network tariff swing. It still includes the same account-specific TWAP, BPEA, and GST inputs as the full import price, so it will not necessarily match the plain regional `sensor.flow_power_<region>_import_price` unless those account inputs happen to align.
+
 ### Export Rates (Happy Hour)
 
 | Region | Happy Hour Rate |
