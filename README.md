@@ -253,6 +253,8 @@ Where:
 - Default Base Rate = 34.0 c/kWh
 - When insufficient data (<1 hour), TWAP defaults to 8.0 c/kWh
 
+Use `Base Rate` for the fixed Flow Power energy component from your plan/PDS. When network tariff support is enabled, the current TOU network swing is applied separately through `Network Tariff Rate - Avg Daily Tariff`, so that swing should not be baked into `Base Rate`.
+
 The import price sensor includes the current network time-of-use swing used by the PEA formula:
 
 ```

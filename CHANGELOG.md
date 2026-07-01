@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.6.11
+
+### Docs: Clarify Current PEA Inputs In The Config UI
+
+- Updated the integration's pricing-setting copy so it no longer advertises the old `Wholesale - TWAP - 1.7c` shorthand once portal and network tariff inputs are available.
+- Clarified in the README that `Base Rate` should remain the fixed plan energy component, while the current network TOU swing is applied separately.
+
 ## v1.6.10
 
 ### Fix: Apex Forecast Series Align To The Priced Interval

@@ -73,7 +73,7 @@
         },
         "data_description": {
           "base_rate": "Your Flow Power base energy rate (GST inclusive)",
-          "pea_enabled": "Apply Price Efficiency Adjustment (PEA = Wholesale - TWAP - 1.7c)",
+          "pea_enabled": "Apply Price Efficiency Adjustment using the available Flow Power account, GST, and network tariff inputs",
           "pea_custom_value": "Override calculated PEA with a fixed value",
           "fp_twap_override": "Override account or rolling TWAP with a fixed value. Leave empty for automatic pricing.",
           "happy_hour_export_rate": "Optional override for plans with a non-standard Happy Hour export rate"
