@@ -57,7 +57,7 @@ Your tariff code is listed on your electricity bill under "tariff" or "network t
 
 ### Flow Power Portal
 
-The Flow Power portal provides **actual account-specific** values directly from Flow Power's billing system, rather than calculated estimates. Portal metrics are exposed through the account sensors. Import price and forecast PEA calculations follow the same pricing-input priority as PowerSync: manual TWAP override first, then Flow Power account import TWAP from KWatch/portal data, then the integration's rolling wholesale TWAP, then the fallback constants.
+The Flow Power portal provides **actual account-specific** values directly from Flow Power's billing system, rather than calculated estimates. Portal metrics are exposed through the account sensors. Import price and forecast PEA calculations use the manual TWAP override first, then the integration's rolling raw wholesale TWAP, then the fallback constant. Portal BPEA and GST values are still used when available.
 
 #### Setup during initial configuration
 
@@ -263,7 +263,7 @@ Network TOU adjustment = Network Tariff Rate - Avg Daily Tariff
 
 If the Flow Power app's **Price of energy** differs by roughly this amount, compare it with the sensor attributes `network_tou_adjustment_cents` and `price_without_network_tou_adjustment_cents`. The app display can omit or smooth the current network TOU adjustment, while the import price sensor is the current complete import estimate used for automation.
 
-`price_without_network_tou_adjustment_cents` removes only the current network tariff swing. It still includes the same account-specific TWAP, BPEA, and GST inputs as the full import price, so it will not necessarily match the plain regional `sensor.flow_power_<region>_import_price` unless those account inputs happen to align.
+`price_without_network_tou_adjustment_cents` removes only the current network tariff swing. It still includes the same BPEA and GST inputs as the full import price, so it will not necessarily match the plain regional `sensor.flow_power_<region>_import_price` unless those account inputs happen to align.
 
 ### Export Rates (Happy Hour)
 

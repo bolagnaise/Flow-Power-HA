@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.6.12
+
+### Fix: Use Raw Wholesale TWAP For Import PEA Pricing
+
+- Import price and forecast PEA calculations now use the integration's rolling raw wholesale TWAP instead of the Flow Power portal account TWAP.
+- Portal account TWAP remains exposed on account sensors, while portal BPEA and GST still feed the pricing calculation when available.
+- Added regression coverage for the reported case where portal account TWAP could already include average network tariff, causing `avg_daily_tariff` to be subtracted twice in the v2 formula.
+
 ## v1.6.11
 
 ### Docs: Clarify Current PEA Inputs In The Config UI

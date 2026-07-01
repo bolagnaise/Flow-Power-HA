@@ -87,9 +87,12 @@ def resolve_flow_power_pricing_context(
 
     Priority for TWAP is:
       1. explicit TWAP override,
-      2. Flow Power account import TWAP from KWatch/portal data,
-      3. rolling wholesale TWAP,
-      4. hardcoded fallback.
+      2. rolling raw wholesale TWAP,
+      3. hardcoded fallback.
+
+    Flow Power account TWAP from KWatch/portal data is exposed on account
+    sensors, but it is not used for import PEA pricing because it already
+    includes account/network effects that the v2 formula models separately.
     """
     options = options or {}
     data = data or {}
@@ -100,15 +103,11 @@ def resolve_flow_power_pricing_context(
         options.get(CONF_FP_TWAP_OVERRIDE),
         data.get(CONF_FP_TWAP_OVERRIDE),
     )
-    portal_twap = _first_number(portal.get("twap_import"), portal.get("twap"))
     tracker_twap = _tracker_twap(domain_data)
 
     if override is not None:
         twap = override
         twap_source = "override"
-    elif portal_twap is not None:
-        twap = portal_twap
-        twap_source = "portal"
     elif tracker_twap is not None:
         twap = tracker_twap
         twap_source = "dynamic"

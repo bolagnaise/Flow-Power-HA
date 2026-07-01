@@ -90,7 +90,7 @@ def test_import_price_exposes_network_tou_adjustment() -> None:
     assert price["price_without_network_tou_adjustment_dollars"] == 0.433
 
 
-def test_pricing_context_uses_account_import_values() -> None:
+def test_pricing_context_uses_raw_wholesale_twap_for_pricing() -> None:
     context = resolve_flow_power_pricing_context(
         options={},
         data={},
@@ -106,8 +106,8 @@ def test_pricing_context_uses_account_import_values() -> None:
         },
     )
 
-    assert context.twap == 20.5
-    assert context.twap_source == "portal"
+    assert context.twap == 8.25
+    assert context.twap_source == "dynamic"
     assert context.bpea == 2.1
     assert context.bpea_source == "portal"
     assert context.gst_multiplier == 1.2
@@ -119,10 +119,10 @@ def test_pricing_context_uses_account_import_values() -> None:
             avg_daily_tariff=5.0,
         ),
         2,
-    ) == 4.3
+    ) == 19.0
 
 
-def test_import_price_prefers_portal_account_twap_over_tracker() -> None:
+def test_import_price_prefers_raw_wholesale_twap_over_portal_account_twap() -> None:
     price = calculate_import_price(
         wholesale_cents=20.0,
         base_rate=34.0,
@@ -145,12 +145,12 @@ def test_import_price_prefers_portal_account_twap_over_tracker() -> None:
         ),
     )
 
-    assert price["twap_used"] == 20.5
-    assert price["twap_source"] == "portal"
+    assert price["twap_used"] == 8.25
+    assert price["twap_source"] == "dynamic"
     assert price["bpea"] == 2.1
     assert price["gst_multiplier"] == 1.2
-    assert round(price["pea"], 2) == 4.3
-    assert round(price["final_cents"], 2) == 38.3
+    assert round(price["pea"], 2) == 19.0
+    assert round(price["final_cents"], 2) == 53.0
 
 
 def test_pricing_context_uses_override_before_account_twap() -> None:
@@ -195,13 +195,13 @@ def test_import_price_uses_portal_aware_pricing_context() -> None:
         pricing_context=context,
     )
 
-    assert price["twap_used"] == 21.02
-    assert price["twap_source"] == "portal"
+    assert price["twap_used"] == 11.49
+    assert price["twap_source"] == "dynamic"
     assert price["bpea"] == 1.7
     assert price["bpea_source"] == "portal"
     assert price["gst_multiplier"] == 1.1
-    assert round(price["pea"], 2) == -17.33
-    assert price["final_cents"] == 16.67
+    assert round(price["pea"], 2) == -6.85
+    assert price["final_cents"] == 27.15
 
 
 def test_pricing_context_falls_back_to_general_bpea_when_import_bpea_is_zero() -> None:
@@ -231,8 +231,8 @@ def test_pricing_context_falls_back_to_general_bpea_when_import_bpea_is_zero() -
     assert context.bpea == 2.057245
     assert context.bpea_source == "portal"
     assert price["bpea"] == 2.057245
-    assert round(price["pea"], 2) == -20.22
-    assert price["final_cents"] == 13.78
+    assert round(price["pea"], 2) == -12.44
+    assert price["final_cents"] == 21.56
 
 
 def test_price_without_network_tou_adjustment_preserves_account_inputs() -> None:
@@ -260,16 +260,48 @@ def test_price_without_network_tou_adjustment_preserves_account_inputs() -> None
     )
 
     assert price["network_tou_adjustment"] == -6.0229
-    assert price["price_without_network_tou_adjustment_cents"] == 19.81
-    assert price["final_cents"] == 13.78
+    assert price["price_without_network_tou_adjustment_cents"] == 27.58
+    assert price["final_cents"] == 21.56
     assert round(
         price["price_without_network_tou_adjustment_cents"]
         - price["final_cents"],
         4,
-    ) == 6.03
-    assert price["twap_used"] == 18.56
+    ) == 6.02
+    assert price["twap_used"] == 11.49
     assert price["bpea"] == 2.057245
     assert price["gst_multiplier"] == 1.1
+
+
+def test_portal_account_twap_does_not_double_subtract_network_average() -> None:
+    context = resolve_flow_power_pricing_context(
+        options={},
+        data={},
+        domain_data={
+            "flow_power_twap_tracker": SimpleNamespace(twap=8.42),
+            "flow_power_portal_data": {
+                "twap": 19.50647193287,
+                "twap_import": 19.50647193287,
+                "bpea": 2.30677,
+                "bpea_import": 2.30677,
+                "gst_multiplier": 1.1,
+            },
+        },
+    )
+
+    price = calculate_import_price(
+        wholesale_cents=11.101,
+        base_rate=34.0,
+        network_tariff_rate=32.5164,
+        avg_daily_tariff=12.1468,
+        pricing_context=context,
+    )
+
+    assert price["twap_used"] == 8.42
+    assert price["twap_source"] == "dynamic"
+    assert price["bpea"] == 2.30677
+    assert round(price["pea"], 2) == 21.01
+    assert price["final_cents"] == 55.01
+    assert price["price_without_network_tou_adjustment_cents"] == 34.64
 
 
 def test_dispatch_interval_end_uses_next_five_minute_boundary() -> None:
