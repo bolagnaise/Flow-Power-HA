@@ -136,3 +136,35 @@ def test_forecast_apex_series_uses_interval_start_timestamps() -> None:
         [int(datetime.fromisoformat("2026-06-30T07:00:00+10:00").timestamp() * 1000), 10.2],
         [int(datetime.fromisoformat("2026-06-30T07:30:00+10:00").timestamp() * 1000), 11.2],
     ]
+
+
+def test_forecast_apex_series_prefers_shorter_slot_for_duplicate_start() -> None:
+    sensor = object.__new__(FlowPowerForecastSensor)
+    sensor._region = "QLD1"
+    sensor.coordinator = SimpleNamespace(
+        data={
+            "forecast": [
+                {
+                    "timestamp": "2026-07-02T08:00:00+10:00",
+                    "duration_minutes": 30,
+                    "price_dollars": 0.251,
+                    "price_cents": 25.1,
+                    "wholesale_cents": 10.2,
+                },
+                {
+                    "timestamp": "2026-07-02T07:35:00+10:00",
+                    "duration_minutes": 5,
+                    "price_dollars": 0.261,
+                    "price_cents": 26.1,
+                    "wholesale_cents": 11.2,
+                },
+            ],
+            "last_update": "2026-07-02T07:25:00+10:00",
+        }
+    )
+
+    attrs = sensor.extra_state_attributes
+
+    expected_epoch = int(datetime.fromisoformat("2026-07-02T07:30:00+10:00").timestamp() * 1000)
+    assert attrs["apex_forecast_import"] == [[expected_epoch, 26.1]]
+    assert attrs["apex_forecast_wholesale"] == [[expected_epoch, 11.2]]

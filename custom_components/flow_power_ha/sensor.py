@@ -496,22 +496,34 @@ class FlowPowerForecastSensor(FlowPowerBaseSensor):
             attrs["forecast_length"] = len(prices)
 
             # Pre-built ApexCharts series: [[epoch_ms, cents], ...]
-            apex_import = []
-            apex_wholesale = []
+            apex_points: dict[int, tuple[int, float, float]] = {}
             for period in forecast:
                 raw_ts = period.get("timestamp", "")
+                duration_minutes = period.get("duration_minutes")
                 dt = self._forecast_period_start(
                     raw_ts,
-                    period.get("duration_minutes"),
+                    duration_minutes,
                 )
                 if dt:
                     epoch_ms = int(dt.timestamp() * 1000)
-                    apex_import.append(
-                        [epoch_ms, period.get("price_cents", 0)]
+                    minutes = (
+                        duration_minutes
+                        if duration_minutes and duration_minutes > 0
+                        else 30
                     )
-                    apex_wholesale.append(
-                        [epoch_ms, period.get("wholesale_cents", 0)]
-                    )
+                    existing = apex_points.get(epoch_ms)
+                    if existing is None or minutes < existing[0]:
+                        apex_points[epoch_ms] = (
+                            minutes,
+                            period.get("price_cents", 0),
+                            period.get("wholesale_cents", 0),
+                        )
+            apex_import = []
+            apex_wholesale = []
+            for epoch_ms in sorted(apex_points):
+                _, price_cents, wholesale_cents = apex_points[epoch_ms]
+                apex_import.append([epoch_ms, price_cents])
+                apex_wholesale.append([epoch_ms, wholesale_cents])
             attrs["apex_forecast_import"] = apex_import
             attrs["apex_forecast_wholesale"] = apex_wholesale
 

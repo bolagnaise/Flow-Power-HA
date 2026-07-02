@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.6.13
+
+### Fix: Deduplicate Apex Forecast Start Times
+
+- The prebuilt `apex_forecast_import` and `apex_forecast_wholesale` series now collapse overlapping forecast points that resolve to the same interval start after timestamp shifting.
+- When both a broader 30-minute slot and a finer 5-minute slot map to the same start time, Apex output now keeps the shorter slot so the chart does not emit duplicate timestamps with conflicting prices.
+- Added regression coverage for overlapping 30-minute and 5-minute forecast windows.
+
 ## v1.6.12
 
 ### Fix: Use Raw Wholesale TWAP For Import PEA Pricing
