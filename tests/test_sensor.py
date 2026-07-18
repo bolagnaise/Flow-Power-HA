@@ -72,6 +72,7 @@ from flow_power_ha.sensor import (  # noqa: E402
     FlowPowerBaseSensor,
     FlowPowerExportPriceSensor,
     FlowPowerForecastSensor,
+    FlowPowerImportPriceSensor,
 )
 
 
@@ -98,6 +99,11 @@ def test_export_price_uses_configured_happy_hour_override() -> None:
 
     assert sensor._get_export_price_for_time(in_happy_hour) == 0.5
     assert sensor._get_export_price_for_time(outside_happy_hour) == 0.0
+
+
+def test_import_and_export_price_sensors_are_measurements() -> None:
+    assert FlowPowerImportPriceSensor._attr_state_class == "measurement"
+    assert FlowPowerExportPriceSensor._attr_state_class == "measurement"
 
 
 def test_forecast_apex_series_uses_interval_start_timestamps() -> None:

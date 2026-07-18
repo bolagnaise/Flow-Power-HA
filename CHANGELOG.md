@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.6.14
+
+### Fix: Mark Price Sensors As Measurements
+
+- Import and export price sensors now explicitly declare `state_class: measurement`, so Home Assistant and downstream optimisers can consistently treat both `$ / kWh` monetary price entities as usable numeric measurements.
+- Added regression coverage for import/export price sensor state-class parity.
+
 ## v1.6.13
 
 ### Fix: Deduplicate Apex Forecast Start Times
