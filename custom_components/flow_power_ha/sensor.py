@@ -203,7 +203,6 @@ class FlowPowerImportPriceSensor(FlowPowerBaseSensor):
     _attr_name = "Import Price"
     _attr_native_unit_of_measurement = "$/kWh"
     _attr_device_class = SensorDeviceClass.MONETARY
-    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_suggested_display_precision = 4
     _attr_icon = "mdi:currency-usd"
 
@@ -288,7 +287,6 @@ class FlowPowerExportPriceSensor(FlowPowerBaseSensor):
     _attr_name = "Export Price"
     _attr_native_unit_of_measurement = "$/kWh"
     _attr_device_class = SensorDeviceClass.MONETARY
-    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_suggested_display_precision = 4
     _attr_icon = "mdi:solar-power"
 

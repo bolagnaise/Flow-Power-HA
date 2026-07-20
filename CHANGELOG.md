@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.6.16
+
+### Fix: Restore API Account Sensors After Portal Removal
+
+- Residential site discovery now sends the empty JSON request body required by the Flow Power Web Data API, restoring automatic NMI detection for affected accounts.
+- When automatic discovery is unavailable, setup and options now accept and validate a manual NMI so PEA, LWAP, TWAP, demand, and account sensors can be restored without deleting the integration.
+- Existing NMIs are preserved during API-key regeneration, even if site discovery is temporarily unavailable.
+
+### Fix: Make API-Key Validation Resilient
+
+- API-key setup now accepts a working current-price endpoint without requiring both optional forecast endpoints to succeed during the same validation attempt.
+- Options-flow API errors now display translated messages instead of raw values such as `cannot_connect`.
+- Price-only API keys remain supported when no residential account summary is available.
+
+### Fix: Remove Invalid Monetary Sensor State Class
+
+- Import and export price sensors no longer declare the unsupported `measurement` state class with Home Assistant's monetary device class, removing the reported entity metadata warning while keeping both sensors numeric and updateable.
+- Added regression coverage for site request payloads, dispatch-only validation, manual NMI checks, and monetary sensor metadata.
+
 ## v1.6.15
 
 ### Breaking: Remove Customer-Portal Workaround

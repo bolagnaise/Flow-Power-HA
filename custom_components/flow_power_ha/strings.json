@@ -22,6 +22,13 @@
           "flowpower_nmi": "Site"
         }
       },
+      "flowpower_nmi": {
+        "title": "Flow Power Account Site",
+        "description": "Automatic residential site discovery was unavailable. Enter the NMI from your electricity bill to enable PEA, LWAP, TWAP, and account sensors, or leave it blank to continue with price-only sensors.",
+        "data": {
+          "flowpower_nmi": "NMI (optional)"
+        }
+      },
       "region": {
         "title": "NEM Region",
         "description": "Select your National Electricity Market region.",
@@ -89,7 +96,12 @@
           "fp_twap_override": "TWAP Override (c/kWh)",
           "happy_hour_export_rate": "Happy Hour Export Rate ($/kWh)",
           "fp_network": "Electricity Distributor (DNSP)",
-          "flowpower_api_key": "Flow Power Web Data API Key"
+          "flowpower_api_key": "Flow Power Web Data API Key",
+          "flowpower_nmi": "Account NMI (optional)"
+        },
+        "data_description": {
+          "flowpower_api_key": "Leave blank to keep the currently saved key.",
+          "flowpower_nmi": "Used for PEA, LWAP, TWAP, demand, and account sensors. Enter the NMI from your electricity bill if automatic site discovery did not find it."
         }
       },
       "flowpower_site_options": {
@@ -106,6 +118,12 @@
           "fp_tariff_code": "Tariff Code"
         }
       }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the Flow Power API",
+      "invalid_api_key": "Invalid Flow Power API key",
+      "invalid_site": "The NMI did not return Flow Power account summary data",
+      "no_sites": "No Flow Power sites or price data were available for this API key"
     }
   },
   "issues": {

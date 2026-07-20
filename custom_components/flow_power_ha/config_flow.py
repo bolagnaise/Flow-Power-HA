@@ -5,7 +5,6 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-import aiohttp
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
@@ -35,7 +34,11 @@ from .const import (
     PRICE_SOURCE_FLOWPOWER,
     REGION_NETWORKS,
 )
-from .flow_power_api import FlowPowerAPIClient, FlowPowerAPIError
+from .flow_power_api import (
+    FlowPowerAPIClient,
+    probe_api_access,
+    probe_residential_nmi,
+)
 from .tariff_utils import get_network_tariff_rate, get_tariff_codes_for_network
 
 _LOGGER = logging.getLogger(__name__)
@@ -50,55 +53,24 @@ async def validate_flowpower_api_key(
     if not api_key:
         return {"success": False, "error": "invalid_api_key"}
 
-    site_lookup_error: str | None = None
     client = FlowPowerAPIClient(api_key, async_get_clientsession(hass))
-    try:
-        sites = await client.get_residential_sites()
-    except FlowPowerAPIError as err:
-        if str(err) == "invalid_api_key":
-            return {"success": False, "error": "invalid_api_key"}
-        site_lookup_error = str(err)
-        sites = []
-    except aiohttp.ClientError:
-        site_lookup_error = "cannot_connect"
-        sites = []
-    except Exception as err:
-        _LOGGER.exception("Flow Power API site validation failed: %s", err)
-        site_lookup_error = "cannot_connect"
-        sites = []
-
-    if sites:
-        return {"success": True, "sites": sites}
-
     api_region = FLOWPOWER_KWATCH_REGIONS.get(region, str(region).lower())
-    dispatch: list[dict[str, Any]] = []
-    forecast_30: list[dict[str, Any]] = []
-    forecast_5: list[dict[str, Any]] = []
-    try:
-        dispatch = await client.dispatch5mins(api_region, period=60)
-        forecast_30 = await client.predispatch30mins(api_region, period=1)
-        forecast_5 = await client.predispatch5mins(api_region, period=60)
-    except FlowPowerAPIError as err:
-        if str(err) == "invalid_api_key":
-            return {"success": False, "error": "invalid_api_key"}
-        return {"success": False, "error": "cannot_connect"}
-    except aiohttp.ClientError:
-        return {"success": False, "error": "cannot_connect"}
-    except Exception as err:
-        _LOGGER.exception("Flow Power API price validation failed: %s", err)
-        return {"success": False, "error": "cannot_connect"}
+    return await probe_api_access(client, api_region)
 
-    if dispatch:
-        return {
-            "success": True,
-            "sites": [],
-            "site_lookup_error": site_lookup_error or "no_sites",
-            "has_forecast": bool(forecast_30 or forecast_5),
-        }
-    return {
-        "success": False,
-        "error": "cannot_connect" if site_lookup_error else "no_sites",
-    }
+
+async def validate_flowpower_nmi(
+    hass,
+    api_key: str,
+    nmi: str,
+) -> dict[str, Any]:
+    """Validate manual residential NMI account-summary access."""
+    if not api_key:
+        return {"success": False, "error": "invalid_api_key"}
+    if not nmi:
+        return {"success": False, "error": "invalid_site"}
+
+    client = FlowPowerAPIClient(api_key, async_get_clientsession(hass))
+    return await probe_residential_nmi(client, nmi)
 
 
 def _flowpower_site_label(site: dict[str, Any]) -> str:
@@ -195,7 +167,7 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     return await self.async_step_tariff()
                 if self._flowpower_sites:
                     return await self.async_step_flowpower_site()
-                return await self.async_step_tariff()
+                return await self.async_step_flowpower_nmi()
             errors["base"] = result.get("error", "cannot_connect")
 
         return self.async_show_form(
@@ -206,6 +178,35 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         type=selector.TextSelectorType.PASSWORD
                     )
                 ),
+            }),
+            errors=errors,
+        )
+
+    async def async_step_flowpower_nmi(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Allow manual NMI entry when automatic site discovery is unavailable."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            nmi = str(user_input.get(CONF_FLOWPOWER_NMI, "")).strip()
+            if not nmi:
+                return await self.async_step_tariff()
+
+            result = await validate_flowpower_nmi(
+                self.hass,
+                self._data.get(CONF_FLOWPOWER_API_KEY, ""),
+                nmi,
+            )
+            if result["success"]:
+                self._data[CONF_FLOWPOWER_NMI] = nmi
+                return await self.async_step_tariff()
+            errors["base"] = result.get("error", "cannot_connect")
+
+        return self.async_show_form(
+            step_id="flowpower_nmi",
+            data_schema=vol.Schema({
+                vol.Optional(CONF_FLOWPOWER_NMI): str,
             }),
             errors=errors,
         )
@@ -419,8 +420,10 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
             api_key = user_input.get(CONF_FLOWPOWER_API_KEY, "")
             if isinstance(api_key, str):
                 api_key = api_key.strip()
+            manual_nmi = str(user_input.get(CONF_FLOWPOWER_NMI, "")).strip()
 
             current = {**self.config_entry.data, **self.config_entry.options}
+            effective_api_key = api_key or current.get(CONF_FLOWPOWER_API_KEY, "")
             if api_key:
                 result = await validate_flowpower_api_key(
                     self.hass,
@@ -435,14 +438,49 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
                     )
                 user_input[CONF_FLOWPOWER_API_KEY] = api_key
                 self._flowpower_sites = result.get("sites", [])
-                if len(self._flowpower_sites) == 1:
+                if manual_nmi:
+                    nmi_result = await validate_flowpower_nmi(
+                        self.hass,
+                        effective_api_key,
+                        manual_nmi,
+                    )
+                    if not nmi_result["success"]:
+                        return self.async_show_form(
+                            step_id="init",
+                            data_schema=self._init_schema(current),
+                            errors={
+                                "base": nmi_result.get("error", "cannot_connect")
+                            },
+                        )
+                    user_input[CONF_FLOWPOWER_NMI] = manual_nmi
+                elif len(self._flowpower_sites) == 1:
                     user_input[CONF_FLOWPOWER_NMI] = self._flowpower_sites[0]["nmi"]
                 elif self._flowpower_sites:
                     self._options_data = user_input
                     return await self.async_step_flowpower_site_options()
+                elif current.get(CONF_FLOWPOWER_NMI):
+                    # Keep an existing manual/previously discovered NMI when
+                    # site discovery is temporarily unavailable during a key
+                    # regeneration.
+                    user_input[CONF_FLOWPOWER_NMI] = current[CONF_FLOWPOWER_NMI]
             elif current.get(CONF_FLOWPOWER_API_KEY):
                 user_input[CONF_FLOWPOWER_API_KEY] = current[CONF_FLOWPOWER_API_KEY]
-                if current.get(CONF_FLOWPOWER_NMI):
+                if manual_nmi:
+                    nmi_result = await validate_flowpower_nmi(
+                        self.hass,
+                        effective_api_key,
+                        manual_nmi,
+                    )
+                    if not nmi_result["success"]:
+                        return self.async_show_form(
+                            step_id="init",
+                            data_schema=self._init_schema(current),
+                            errors={
+                                "base": nmi_result.get("error", "cannot_connect")
+                            },
+                        )
+                    user_input[CONF_FLOWPOWER_NMI] = manual_nmi
+                elif current.get(CONF_FLOWPOWER_NMI):
                     user_input[CONF_FLOWPOWER_NMI] = current[CONF_FLOWPOWER_NMI]
 
             self._options_data = user_input
@@ -544,6 +582,10 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
                     type=selector.TextSelectorType.PASSWORD
                 )
             ),
+            vol.Optional(
+                CONF_FLOWPOWER_NMI,
+                description={"suggested_value": current.get(CONF_FLOWPOWER_NMI)},
+            ): str,
         }
 
         return vol.Schema(schema_fields)

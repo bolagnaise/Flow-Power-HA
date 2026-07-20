@@ -63,8 +63,9 @@ To connect the supported API:
 2. Copy the API key.
 3. Select **Flow Power API (KWatch)** during setup, or open **Settings > Devices & Services > Flow Power HA > Configure**.
 4. Enter the API key and select a residential site if one is returned.
+5. If automatic site discovery is unavailable, enter the NMI from your electricity bill to enable account-summary sensors, or leave it blank to continue with price-only sensors.
 
-Some valid keys provide prices but no residential-site summary. In that case pricing continues to work, but account-summary sensors remain unavailable. Import price and forecast PEA calculations use the manual TWAP override first, then the integration's rolling raw wholesale TWAP, then the fallback constant. API BPEA and GST values are used when available.
+Some valid keys provide prices even when residential-site discovery is temporarily unavailable. The options form retains an existing NMI during API-key changes and allows a manual NMI to be validated against the account-summary endpoint. Import price and forecast PEA calculations use the manual TWAP override first, then the integration's rolling raw wholesale TWAP, then the fallback constant. API BPEA and GST values are used when available.
 
 ### Pricing Settings
 

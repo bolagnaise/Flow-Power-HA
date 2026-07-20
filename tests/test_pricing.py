@@ -30,6 +30,8 @@ from flow_power_ha.flow_power_api import (  # noqa: E402
     FlowPowerAPIClient,
     FlowPowerAPIError,
     merge_price_forecasts,
+    probe_api_access,
+    probe_residential_nmi,
 )
 
 
@@ -361,6 +363,7 @@ def test_flowpower_api_client_normalizes_sites_summary_and_prices() -> None:
     assert dispatch[0]["perKwh"] == 12.34
     assert forecast[0]["perKwh"] == 9.8
     assert forecast[0]["duration"] == 30
+    assert session.calls[0][0:2] == ("GetResidentialSites", {})
     assert all(call[2]["x-api-key"] == "secret-key" for call in session.calls)
 
 
@@ -447,6 +450,70 @@ def test_flowpower_price_endpoints_can_work_when_site_lookup_fails() -> None:
         "dispatch5mins",
         "predispatch30mins",
     ]
+
+
+def test_api_probe_accepts_dispatch_when_site_lookup_fails() -> None:
+    session = _FakeSession(
+        {
+            "GetResidentialSites": ({"error": "site lookup unavailable"}, 500),
+            "dispatch5mins": {
+                "data": [
+                    {
+                        "timestamp": "2026-06-08T10:00:00+10:00",
+                        "price": 123.4,
+                    }
+                ]
+            },
+        }
+    )
+    client = FlowPowerAPIClient("secret-key", session)  # type: ignore[arg-type]
+
+    result = asyncio.run(probe_api_access(client, "nsw"))
+
+    assert result == {
+        "success": True,
+        "sites": [],
+        "site_lookup_error": "api_status_500",
+    }
+    assert [call[0] for call in session.calls] == [
+        "GetResidentialSites",
+        "dispatch5mins",
+    ]
+
+
+def test_manual_nmi_probe_requires_account_summary_access() -> None:
+    valid_session = _FakeSession(
+        {
+            "GetResidentialSiteSummary": {
+                "NMI": "4407000000",
+                "PEAActual": "-2.4",
+            }
+        }
+    )
+    invalid_session = _FakeSession(
+        {
+            # Some API failures arrive as HTTP 200 error objects. They must not
+            # be mistaken for a valid all-null account summary.
+            "GetResidentialSiteSummary": {"error": "not found"},
+        }
+    )
+
+    valid = asyncio.run(
+        probe_residential_nmi(
+            FlowPowerAPIClient("secret-key", valid_session),  # type: ignore[arg-type]
+            "4407000000",
+        )
+    )
+    invalid = asyncio.run(
+        probe_residential_nmi(
+            FlowPowerAPIClient("secret-key", invalid_session),  # type: ignore[arg-type]
+            "bad-nmi",
+        )
+    )
+
+    assert valid["success"] is True
+    assert valid["summary"]["pea_actual"] == -2.4
+    assert invalid == {"success": False, "error": "invalid_site"}
 
 
 def test_merge_price_forecasts_keeps_near_5_minute_slots() -> None:
@@ -537,10 +604,10 @@ def test_config_flow_and_coordinator_wire_kwatch_api_paths() -> None:
     sensor_source = (COMPONENT_ROOT / "sensor.py").read_text()
 
     assert "validate_flowpower_api_key" in config_flow_source
-    assert "client.dispatch5mins(api_region, period=60)" in config_flow_source
-    assert "client.predispatch30mins(api_region, period=1)" in config_flow_source
-    assert "client.predispatch5mins(api_region, period=60)" in config_flow_source
-    assert "if dispatch:" in config_flow_source
+    assert "return await probe_api_access(client, api_region)" in config_flow_source
+    assert "validate_flowpower_nmi" in config_flow_source
+    assert "async_step_flowpower_nmi" in config_flow_source
+    assert "probe_residential_nmi" in config_flow_source
     assert "async_step_flowpower_site" in config_flow_source
     assert "async_step_flowpower_site_options" in config_flow_source
     assert "FlowPowerAPIClient(self.fp_api_key" in coordinator_source

@@ -18,6 +18,92 @@ class FlowPowerAPIError(Exception):
     """Raised when the Flow Power API returns an unusable response."""
 
 
+async def probe_api_access(
+    client: FlowPowerAPIClient,
+    reg_name: str,
+) -> dict[str, Any]:
+    """Validate API access without requiring every optional endpoint to work."""
+    site_lookup_error: str | None = None
+    try:
+        sites = await client.get_residential_sites()
+    except FlowPowerAPIError as err:
+        if str(err) == "invalid_api_key":
+            return {"success": False, "error": "invalid_api_key"}
+        site_lookup_error = str(err)
+        sites = []
+    except aiohttp.ClientError:
+        site_lookup_error = "cannot_connect"
+        sites = []
+    except Exception as err:
+        _LOGGER.exception("Flow Power API site validation failed: %s", err)
+        site_lookup_error = "cannot_connect"
+        sites = []
+
+    if sites:
+        return {"success": True, "sites": sites}
+
+    # Current dispatch pricing is sufficient for a working price-only entry.
+    # Forecast endpoints are optional at runtime and must not reject a valid key.
+    try:
+        dispatch = await client.dispatch5mins(reg_name, period=60)
+    except FlowPowerAPIError as err:
+        if str(err) == "invalid_api_key":
+            return {"success": False, "error": "invalid_api_key"}
+        return {"success": False, "error": "cannot_connect"}
+    except aiohttp.ClientError:
+        return {"success": False, "error": "cannot_connect"}
+    except Exception as err:
+        _LOGGER.exception("Flow Power API price validation failed: %s", err)
+        return {"success": False, "error": "cannot_connect"}
+
+    if dispatch:
+        return {
+            "success": True,
+            "sites": [],
+            "site_lookup_error": site_lookup_error or "no_sites",
+        }
+    return {
+        "success": False,
+        "error": "cannot_connect" if site_lookup_error else "no_sites",
+    }
+
+
+async def probe_residential_nmi(
+    client: FlowPowerAPIClient,
+    nmi: str,
+) -> dict[str, Any]:
+    """Validate that an NMI exposes residential account summary data."""
+    try:
+        summary = await client.get_residential_site_summary(nmi)
+    except FlowPowerAPIError as err:
+        if str(err) == "invalid_api_key":
+            return {"success": False, "error": "invalid_api_key"}
+        if str(err) in ("api_status_400", "api_status_404"):
+            return {"success": False, "error": "invalid_site"}
+        return {"success": False, "error": "cannot_connect"}
+    except aiohttp.ClientError:
+        return {"success": False, "error": "cannot_connect"}
+    except Exception as err:
+        _LOGGER.exception("Flow Power API NMI validation failed: %s", err)
+        return {"success": False, "error": "cannot_connect"}
+
+    summary_fields = (
+        "lwap",
+        "twap",
+        "lwap_import",
+        "twap_import",
+        "avg_rrp",
+        "pea_actual",
+        "pea_target",
+        "total_intervals",
+        "site_losses_dlf",
+        "gst_multiplier",
+    )
+    if summary and any(summary.get(field) is not None for field in summary_fields):
+        return {"success": True, "summary": summary}
+    return {"success": False, "error": "invalid_site"}
+
+
 def merge_price_forecasts(
     *forecast_sets: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -284,7 +370,9 @@ class FlowPowerAPIClient:
 
     async def get_residential_sites(self) -> list[dict[str, Any]]:
         """Return residential sites available to the API key."""
-        payload = await self._post("GetResidentialSites")
+        # The API documents this as an empty JSON request body, not a bodyless
+        # POST. Some accounts reject or return no metadata without the object.
+        payload = await self._post("GetResidentialSites", {})
         sites = self._records(payload, "sites")
         normalized = []
         for site in sites:

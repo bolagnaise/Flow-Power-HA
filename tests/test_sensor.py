@@ -101,9 +101,9 @@ def test_export_price_uses_configured_happy_hour_override() -> None:
     assert sensor._get_export_price_for_time(outside_happy_hour) == 0.0
 
 
-def test_import_and_export_price_sensors_are_measurements() -> None:
-    assert FlowPowerImportPriceSensor._attr_state_class == "measurement"
-    assert FlowPowerExportPriceSensor._attr_state_class == "measurement"
+def test_monetary_price_sensors_do_not_set_invalid_state_class() -> None:
+    assert not hasattr(FlowPowerImportPriceSensor, "_attr_state_class")
+    assert not hasattr(FlowPowerExportPriceSensor, "_attr_state_class")
 
 
 def test_forecast_apex_series_uses_interval_start_timestamps() -> None:
