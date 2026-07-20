@@ -8,33 +8,17 @@ from types import SimpleNamespace
 from typing import Any
 
 import aiohttp
-try:
-    from homeassistant.helpers.issue_registry import IssueSeverity, async_create_issue, async_delete_issue
-except ImportError:
-    try:
-        from homeassistant.components.repairs import IssueSeverity, async_create_issue, async_delete_issue
-    except ImportError:
-        # HA version too old for repairs — stub out
-        IssueSeverity = None  # type: ignore[assignment,misc]
-
-        def async_create_issue(*args, **kwargs):  # type: ignore[misc]
-            pass
-
-        def async_delete_issue(*args, **kwargs):  # type: ignore[misc]
-            pass
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api_clients import AEMOClient, FlowPowerPortalClient
+from .api_clients import AEMOClient
 from .const import (
     CONF_BASE_RATE,
     CONF_FLOWPOWER_API_KEY,
-    CONF_FLOWPOWER_EMAIL,
     CONF_FLOWPOWER_NMI,
     CONF_HAPPY_HOUR_EXPORT_RATE,
-    CONF_FLOWPOWER_PASSWORD,
     CONF_FP_NETWORK,
     CONF_FP_TARIFF_CODE,
     CONF_NEM_REGION,
@@ -96,7 +80,6 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.config = config
         self._session: aiohttp.ClientSession | None = None
         self._aemo_client: AEMOClient | None = None
-        self._fp_client: FlowPowerPortalClient | None = None
         self._fp_api_client: FlowPowerAPIClient | None = None
         self._unsub_time_listeners: list = []
 
@@ -115,12 +98,9 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._avg_daily_tariff: float | None = None
         self._tariff_schedule: dict[int, float] | None = None
 
-        # Flow Power portal config (may come from initial data or options)
-        self.fp_email = config.get(CONF_FLOWPOWER_EMAIL)
-        self.fp_password = config.get(CONF_FLOWPOWER_PASSWORD)
+        # Flow Power Web Data API configuration.
         self.fp_api_key = config.get(CONF_FLOWPOWER_API_KEY)
         self.fp_nmi = config.get(CONF_FLOWPOWER_NMI)
-        self.fp_enabled = bool(self.fp_email and self.fp_password)
         self.fp_api_enabled = bool(self.fp_api_key)
 
         # TWAP tracking
@@ -132,18 +112,12 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Import price history for ApexCharts: [[epoch_ms, cents], ...]
         self._import_price_history: list[list[int | float]] = []
 
-        # Flow Power portal/API account data
+        # Flow Power API account data
         self._fp_data: dict[str, Any] | None = None
         self._fp_last_fetch: float = 0
-        self._fp_auth_failed: bool = False
-        self._fp_restore_failures: int = 0
-        self._fp_restore_backoff_until: float = 0
 
-        # Persistent cookie storage for Flow Power portal session
-        self._fp_cookie_store = Store(hass, 1, f"{DOMAIN}.fp_session")
-
-        # Persistent portal data cache (survives restarts)
-        self._fp_data_store = Store(hass, 1, f"{DOMAIN}.fp_portal_data")
+        # Persistent API account-data cache (survives restarts)
+        self._fp_data_store = Store(hass, 1, f"{DOMAIN}.fp_account_data")
 
         # ------------------------------------------------------------------
         # Adaptive polling state
@@ -266,7 +240,7 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             {},
             {
                 "flow_power_twap_tracker": SimpleNamespace(twap=self._twap),
-                "flow_power_portal_data": self._fp_data,
+                "flow_power_account_data": self._fp_data,
             },
         )
 
@@ -399,30 +373,15 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     len(schedule),
                 )
 
-        # Pick up authenticated portal client from config/options flow if available
-        pending = self.hass.data.get(DOMAIN, {}).pop("_pending_fp_client", None)
-        _LOGGER.debug(
-            "Flow Power: Setup - price_source=%s, fp_enabled=%s, pending_client=%s",
-            self.price_source, self.fp_enabled,
-            f"authenticated={pending.is_authenticated}" if pending else "None",
-        )
-        if pending and pending.is_authenticated:
-            self._fp_client = pending
-            _LOGGER.info("Flow Power: Using authenticated portal client from config flow")
-            await self._save_fp_cookies()
-        elif self.fp_enabled:
-            self._fp_client = FlowPowerPortalClient()
-            await self._fp_authenticate()
-
         # Restore cached account data so sensors don't go unknown on restart
-        if (self.fp_enabled or self.fp_api_enabled) and not self._fp_data:
+        if self.fp_api_enabled and not self._fp_data:
             cached = await self._fp_data_store.async_load()
             if cached and isinstance(cached.get("data"), dict):
                 self._fp_data = cached["data"]
                 self._fp_data["cached"] = True
                 _LOGGER.info(
                     "Flow Power: Restored cached account data "
-                    "(PEA=%.2f, TWAP=%.2f) — will refresh when session restored",
+                    "(PEA=%.2f, TWAP=%.2f) — will refresh from the API",
                     self._fp_data.get("pea_actual", 0),
                     self._fp_data.get("twap", 0),
                 )
@@ -440,70 +399,15 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._get_twap_days(),
             )
 
-    # ------------------------------------------------------------------
-    # Portal authentication helpers (unchanged)
-    # ------------------------------------------------------------------
-
-    async def _fp_authenticate(self) -> None:
-        """Restore Flow Power portal session from stored cookies."""
-        if not self._fp_client:
-            return
-
-        stored = await self._fp_cookie_store.async_load()
-        if stored and stored.get("cookies"):
-            _LOGGER.info(
-                "Flow Power: Found %d stored session cookies, attempting restore",
-                len(stored["cookies"]),
-            )
-            self._fp_client.import_session_cookies(stored["cookies"])
-
-            try:
-                success = await self._fp_client.restore_session()
-                if success:
-                    _LOGGER.info("Flow Power: Session restored from stored cookies")
-                    return
-                else:
-                    _LOGGER.warning(
-                        "Flow Power: Stored session expired — "
-                        "re-authenticate via Options > Re-authenticate Flow Power"
-                    )
-                    self._fp_auth_failed = True
-            except Exception as e:
-                _LOGGER.error("Flow Power: Session restore error: %s", e)
-                self._fp_auth_failed = True
-        else:
-            _LOGGER.info(
-                "Flow Power: No stored session — "
-                "authenticate via Options > Re-authenticate Flow Power"
-            )
-
-    async def _save_fp_cookies(self) -> None:
-        """Persist the Flow Power session cookies to HA storage."""
-        if not self._fp_client:
-            return
-
-        try:
-            cookies = self._fp_client.export_session_cookies()
-            if cookies:
-                await self._fp_cookie_store.async_save({"cookies": cookies})
-                _LOGGER.info(
-                    "Flow Power: Saved %d session cookies to persistent storage",
-                    len(cookies),
-                )
-            else:
-                _LOGGER.warning("Flow Power: No cookies to save — cookie jar is empty")
-        except Exception as e:
-            _LOGGER.error("Flow Power: Error saving session cookies: %s", e)
-
     async def _save_fp_data_cache(self) -> None:
-        """Persist the last known portal data so sensors survive restarts."""
+        """Persist the last known API account data so sensors survive restarts."""
         if not self._fp_data:
             return
         try:
             save_data = {k: v for k, v in self._fp_data.items() if k != "cached"}
             await self._fp_data_store.async_save({"data": save_data})
         except Exception as e:
-            _LOGGER.error("Flow Power: Error saving portal data cache: %s", e)
+            _LOGGER.error("Flow Power: Error saving API account data cache: %s", e)
 
     # ------------------------------------------------------------------
     # Main update loop
@@ -552,8 +456,6 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Account data is independent of dispatch timing.
             if self.fp_api_enabled and self.fp_nmi:
                 await self._fetch_flowpower_api_data(data)
-            elif self.fp_enabled:
-                await self._fetch_flowpower_data(data)
 
             # KWatch API pricing is the primary Flow Power path when an API key
             # is configured. If it fails, fall through to the existing AEMO path.
@@ -699,7 +601,7 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise UpdateFailed(f"Error fetching data: {err}") from err
 
     # ------------------------------------------------------------------
-    # Portal data fetch (unchanged)
+    # Flow Power API data fetch
     # ------------------------------------------------------------------
 
     async def _fetch_kwatch_price_data(self, data: dict[str, Any]) -> bool:
@@ -820,117 +722,6 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self._save_fp_data_cache()
         elif self._fp_data:
             data["flowpower_data"] = self._fp_data
-
-    async def _check_pending_fp_client(self) -> bool:
-        """Check for a freshly authenticated client from reauth flow.
-
-        Returns True if a new client was picked up.
-        """
-        pending = self.hass.data.get(DOMAIN, {}).pop("_pending_fp_client", None)
-        if pending and pending.is_authenticated:
-            if self._fp_client:
-                await self._fp_client.close()
-            self._fp_client = pending
-            self._fp_auth_failed = False
-            self._fp_restore_failures = 0
-            self._fp_restore_backoff_until = 0
-            async_delete_issue(self.hass, DOMAIN, "session_expired")
-            _LOGGER.info("Flow Power: Picked up authenticated client from reauth flow")
-            return True
-        return False
-
-    async def _fetch_flowpower_data(self, data: dict[str, Any]) -> None:
-        """Fetch account data from the Flow Power portal.
-
-        Updates self._fp_data and data["flowpower_data"] on success.
-        Only fetches every UPDATE_INTERVAL_FLOWPOWER seconds.
-        """
-        if await self._check_pending_fp_client():
-            await self._save_fp_cookies()
-
-        if not self._fp_client:
-            if self._fp_data:
-                data["flowpower_data"] = self._fp_data
-            return
-
-        now = time_mod.time()
-        if now - self._fp_last_fetch < UPDATE_INTERVAL_FLOWPOWER and self._fp_data:
-            data["flowpower_data"] = self._fp_data
-            return
-
-        account_data = await self._fp_client.get_account_data()
-
-        if self._fp_client._cookies_refreshed:
-            self._fp_client._cookies_refreshed = False
-            await self._save_fp_cookies()
-
-        if account_data:
-            account_data.pop("cached", None)
-            self._fp_data = account_data
-            self._fp_last_fetch = now
-            data["flowpower_data"] = account_data
-            self._fp_restore_failures = 0
-            self._fp_restore_backoff_until = 0
-            async_delete_issue(self.hass, DOMAIN, "session_expired")
-            _LOGGER.info(
-                "Flow Power: Account data updated - TWAP=%.2f, PEA=%.2f, LWAP=%.2f",
-                account_data.get("twap", 0),
-                account_data.get("pea_actual", 0),
-                account_data.get("lwap", 0),
-            )
-            await self._save_fp_cookies()
-            await self._save_fp_data_cache()
-        elif not self._fp_client.is_authenticated:
-            if now < self._fp_restore_backoff_until:
-                if self._fp_data:
-                    data["flowpower_data"] = self._fp_data
-                return
-
-            _LOGGER.info("Flow Power: Session expired, attempting restore")
-            if await self._fp_client.restore_session():
-                self._fp_restore_failures = 0
-                self._fp_restore_backoff_until = 0
-                async_delete_issue(self.hass, DOMAIN, "session_expired")
-                await self._save_fp_cookies()
-                account_data = await self._fp_client.get_account_data()
-                if account_data:
-                    account_data.pop("cached", None)
-                    self._fp_data = account_data
-                    self._fp_last_fetch = now
-                    data["flowpower_data"] = account_data
-                    _LOGGER.info("Flow Power: Account data fetched after session restore")
-                    await self._save_fp_data_cache()
-                    return
-            self._fp_restore_failures += 1
-            backoff = min(30 * (2 ** (self._fp_restore_failures - 1)), 600)
-            self._fp_restore_backoff_until = now + backoff
-            if backoff >= 600 and IssueSeverity is not None:
-                async_create_issue(
-                    self.hass,
-                    DOMAIN,
-                    "session_expired",
-                    is_fixable=False,
-                    severity=IssueSeverity.WARNING,
-                    translation_key="session_expired",
-                )
-            if self._fp_data:
-                data["flowpower_data"] = self._fp_data
-                _LOGGER.warning(
-                    "Flow Power: Using cached portal data (restore failed, "
-                    "retry in %ds — re-authenticate via Options if persistent)",
-                    backoff,
-                )
-            else:
-                _LOGGER.warning(
-                    "Flow Power: No portal data available (session expired, "
-                    "retry in %ds — re-authenticate via Options)",
-                    backoff,
-                )
-        elif self._fp_data:
-            data["flowpower_data"] = self._fp_data
-            _LOGGER.warning("Flow Power: Using cached portal data (fetch failed)")
-        else:
-            _LOGGER.warning("Flow Power: No portal data available")
 
     # ------------------------------------------------------------------
     # TWAP helpers (unchanged)

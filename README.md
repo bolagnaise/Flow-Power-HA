@@ -4,9 +4,8 @@ A Home Assistant integration for Flow Power electricity pricing sensors, compati
 
 ## Features
 
-- **Price Sources**: Supports AEMO (direct wholesale), Amber Electric, and Flow Power portal login
-- **Flow Power Portal**: Login directly to your Flow Power account to get actual PEA, LWAP, and TWAP values from Flow Power's billing system
-- **Connect Anytime**: Already set up with AEMO or Amber? Connect your Flow Power portal from the integration options — no need to reconfigure
+- **Price Sources**: Supports AEMO (direct wholesale) and the official Flow Power Web Data API
+- **Flow Power API**: Uses an API key to fetch KWatch prices and account values such as PEA, LWAP, and TWAP
 - **Network Tariff (TOU)**: Select your electricity distributor and tariff code — network charges are applied to both current prices and forecasts
 - **PEA Calculation**: Implements Flow Power's Price Efficiency Adjustment formula
 - **Happy Hour Export**: Automatic export pricing based on Flow Power Happy Hour (5:30pm-7:30pm)
@@ -36,8 +35,7 @@ A Home Assistant integration for Flow Power electricity pricing sensors, compati
 
 Choose between:
 - **AEMO (Direct wholesale)**: Fetches prices directly from AEMO NEMWeb
-- **Amber Electric**: Uses your Amber API key for pricing data
-- **Flow Power (Portal login)**: Logs into your Flow Power account at [flowpower.kwatch.com.au](https://flowpower.kwatch.com.au) to fetch actual account data (PEA, LWAP, TWAP, DLF). Uses AEMO for real-time spot prices and forecasts. Requires SMS MFA during setup.
+- **Flow Power API (KWatch)**: Uses the API key from **Flow Power App > More > Web Data Access** for current prices, forecasts, and available account-summary data. AEMO remains the fallback if a transient API price request fails.
 
 ### Network Tariff (TOU Pricing)
 
@@ -55,37 +53,18 @@ Select your electricity distributor (DNSP) and tariff code to include time-of-us
 
 Your tariff code is listed on your electricity bill under "tariff" or "network tariff". The integration shows a link to your distributor's tariff lookup page during configuration.
 
-### Flow Power Portal
+### Flow Power Web Data API
 
-The Flow Power portal provides **actual account-specific** values directly from Flow Power's billing system, rather than calculated estimates. Portal metrics are exposed through the account sensors. Import price and forecast PEA calculations use the manual TWAP override first, then the integration's rolling raw wholesale TWAP, then the fallback constant. Portal BPEA and GST values are still used when available.
+The customer-portal login workaround has been removed. The integration no longer stores a Flow Power email/password, performs SMS MFA, or sends automated requests to the customer portal.
 
-#### Setup during initial configuration
+To connect the supported API:
 
-1. Select **"Flow Power (Portal login)"** as your price source
-2. Enter your Flow Power portal email and password
-3. Enter the SMS verification code sent to your registered phone number
-4. Select your NEM region, distributor, and tariff code
-5. Configure pricing
+1. Open the Flow Power app and go to **More > Web Data Access**.
+2. Copy the API key.
+3. Select **Flow Power API (KWatch)** during setup, or open **Settings > Devices & Services > Flow Power HA > Configure**.
+4. Enter the API key and select a residential site if one is returned.
 
-#### Connect to an existing integration
-
-Already set up with AEMO or Amber? You can connect your Flow Power portal account without removing the integration:
-
-1. Go to **Settings > Devices & Services > Flow Power HA > Configure**
-2. Toggle **"Connect Flow Power portal account"**
-3. Submit, then enter your portal email and password
-4. Enter the SMS verification code
-5. Select your tariff code
-
-#### Re-authentication
-
-Portal sessions are persisted across restarts. If your session does expire:
-
-1. Go to **Settings > Devices & Services > Flow Power HA > Configure**
-2. Toggle **"Re-authenticate with Flow Power portal"**
-3. Submit — your credentials are auto-submitted, you only need the SMS code
-
-The integration continues to work with calculated TWAP while the portal session is expired — re-authenticating simply restores the actual values.
+Some valid keys provide prices but no residential-site summary. In that case pricing continues to work, but account-summary sensors remain unavailable. Import price and forecast PEA calculations use the manual TWAP override first, then the integration's rolling raw wholesale TWAP, then the fallback constant. API BPEA and GST values are used when available.
 
 ### Pricing Settings
 
@@ -107,11 +86,11 @@ The integration continues to work with calculated TWAP while the portal session 
 | `sensor.flow_power_<region>_price_forecast` | $/kWh | Price forecast for EMHASS and HAEO |
 | `sensor.flow_power_<region>_twap` | c/kWh | 30-day rolling average wholesale price (TWAP) |
 | `sensor.flow_power_<region>_network_tariff` | c/kWh | Current network tariff rate |
-| `sensor.flow_power_<region>_account_pea_actual` | c/kWh | Actual PEA from Flow Power portal (portal only) |
+| `sensor.flow_power_<region>_account_pea_actual` | c/kWh | Actual PEA from the Flow Power API when account-summary access is available |
 
 ### Account PEA Sensor Attributes
 
-When the Flow Power portal is connected, the Account PEA sensor exposes these attributes:
+When the Flow Power API provides account-summary data, the Account PEA sensor exposes these attributes:
 
 | Attribute | Description |
 |-----------|-------------|

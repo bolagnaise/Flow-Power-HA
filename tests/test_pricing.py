@@ -96,7 +96,7 @@ def test_pricing_context_uses_raw_wholesale_twap_for_pricing() -> None:
         data={},
         domain_data={
             "flow_power_twap_tracker": SimpleNamespace(twap=8.25),
-            "flow_power_portal_data": {
+            "flow_power_account_data": {
                 "twap": 21.0,
                 "twap_import": 20.5,
                 "bpea": 2.3,
@@ -109,7 +109,7 @@ def test_pricing_context_uses_raw_wholesale_twap_for_pricing() -> None:
     assert context.twap == 8.25
     assert context.twap_source == "dynamic"
     assert context.bpea == 2.1
-    assert context.bpea_source == "portal"
+    assert context.bpea_source == "api"
     assert context.gst_multiplier == 1.2
     assert round(
         calculate_flow_power_pea(
@@ -134,7 +134,7 @@ def test_import_price_prefers_raw_wholesale_twap_over_portal_account_twap() -> N
             data={},
             domain_data={
                 "flow_power_twap_tracker": SimpleNamespace(twap=8.25),
-                "flow_power_portal_data": {
+                "flow_power_account_data": {
                     "twap": 21.0,
                     "twap_import": 20.5,
                     "bpea": 2.3,
@@ -159,7 +159,7 @@ def test_pricing_context_uses_override_before_account_twap() -> None:
         data={},
         domain_data={
             "flow_power_twap_tracker": SimpleNamespace(twap=8.25),
-            "flow_power_portal_data": {
+            "flow_power_account_data": {
                 "twap_import": 20.5,
                 "bpea_import": 2.1,
                 "gst_multiplier": 1.1,
@@ -172,13 +172,13 @@ def test_pricing_context_uses_override_before_account_twap() -> None:
     assert context.bpea == 2.1
 
 
-def test_import_price_uses_portal_aware_pricing_context() -> None:
+def test_import_price_uses_api_account_pricing_context() -> None:
     context = resolve_flow_power_pricing_context(
         options={},
         data={},
         domain_data={
             "flow_power_twap_tracker": SimpleNamespace(twap=11.49),
-            "flow_power_portal_data": {
+            "flow_power_account_data": {
                 "twap": 21.02,
                 "twap_import": 21.02,
                 "bpea_import": 1.7,
@@ -198,7 +198,7 @@ def test_import_price_uses_portal_aware_pricing_context() -> None:
     assert price["twap_used"] == 11.49
     assert price["twap_source"] == "dynamic"
     assert price["bpea"] == 1.7
-    assert price["bpea_source"] == "portal"
+    assert price["bpea_source"] == "api"
     assert price["gst_multiplier"] == 1.1
     assert round(price["pea"], 2) == -6.85
     assert price["final_cents"] == 27.15
@@ -210,7 +210,7 @@ def test_pricing_context_falls_back_to_general_bpea_when_import_bpea_is_zero() -
         data={},
         domain_data={
             "flow_power_twap_tracker": SimpleNamespace(twap=11.49),
-            "flow_power_portal_data": {
+            "flow_power_account_data": {
                 "twap": 18.56,
                 "twap_import": 18.56,
                 "bpea": 2.057245,
@@ -229,7 +229,7 @@ def test_pricing_context_falls_back_to_general_bpea_when_import_bpea_is_zero() -
     )
 
     assert context.bpea == 2.057245
-    assert context.bpea_source == "portal"
+    assert context.bpea_source == "api"
     assert price["bpea"] == 2.057245
     assert round(price["pea"], 2) == -12.44
     assert price["final_cents"] == 21.56
@@ -241,7 +241,7 @@ def test_price_without_network_tou_adjustment_preserves_account_inputs() -> None
         data={},
         domain_data={
             "flow_power_twap_tracker": SimpleNamespace(twap=11.49),
-            "flow_power_portal_data": {
+            "flow_power_account_data": {
                 "twap": 18.56,
                 "twap_import": 18.56,
                 "bpea": 2.057245,
@@ -278,7 +278,7 @@ def test_portal_account_twap_does_not_double_subtract_network_average() -> None:
         data={},
         domain_data={
             "flow_power_twap_tracker": SimpleNamespace(twap=8.42),
-            "flow_power_portal_data": {
+            "flow_power_account_data": {
                 "twap": 19.50647193287,
                 "twap_import": 19.50647193287,
                 "bpea": 2.30677,
@@ -556,3 +556,29 @@ def test_config_flow_and_coordinator_wire_kwatch_api_paths() -> None:
     assert "self._publish_manual_data_update(data)" in coordinator_source
     assert "CONF_FLOWPOWER_API_KEY" in sensor_source
     assert "CONF_FLOWPOWER_NMI" in sensor_source
+
+
+def test_legacy_portal_transport_is_removed_and_migrated() -> None:
+    api_clients_source = (COMPONENT_ROOT / "api_clients.py").read_text()
+    config_source = (COMPONENT_ROOT / "config_flow.py").read_text()
+    coordinator_source = (COMPONENT_ROOT / "coordinator.py").read_text()
+    init_source = (COMPONENT_ROOT / "__init__.py").read_text()
+
+    for forbidden in (
+        "FlowPowerPortalClient",
+        "_pending_fp_client",
+        "b2clogin.com",
+        "/report/get",
+        "Account/KeepAlive",
+    ):
+        assert forbidden not in api_clients_source
+        assert forbidden not in config_source
+        assert forbidden not in coordinator_source
+
+    assert "VERSION = 3" in config_source
+    assert "if config_entry.version == 2:" in init_source
+    assert 'values.pop("flowpower_email", None)' in init_source
+    assert 'values.pop("flowpower_password", None)' in init_source
+    assert 'f"{DOMAIN}.fp_session"' in init_source
+    assert "web_data_api_required" in init_source
+    assert "flow_power_account_data" in coordinator_source

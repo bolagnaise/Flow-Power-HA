@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.6.15
+
+### Breaking: Remove Customer-Portal Workaround
+
+- Removed automated Flow Power customer-portal login, Azure B2C/SMS MFA, session-cookie persistence, report scraping, and portal fallback requests.
+- Flow Power prices and account summaries now use only the supported Web Data API key from **Flow Power App > More > Web Data Access**; AEMO remains the transient pricing fallback.
+- Existing portal credentials and cookies are deleted during config-entry migration. Portal-only entries continue on AEMO-direct pricing and receive a Home Assistant repair requesting the API key.
+- Existing account sensor entity IDs are preserved. Valid price-only API keys continue to work without account-summary sensors.
+
 ## v1.6.14
 
 ### Fix: Mark Price Sensors As Measurements

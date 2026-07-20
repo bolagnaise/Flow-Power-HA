@@ -17,8 +17,20 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.storage import Store
 
-from .const import DOMAIN
+try:
+    from homeassistant.helpers.issue_registry import IssueSeverity, async_create_issue, async_delete_issue
+except ImportError:
+    from homeassistant.components.repairs import IssueSeverity, async_create_issue, async_delete_issue
+
+from .const import (
+    CONF_FLOWPOWER_API_KEY,
+    CONF_PRICE_SOURCE,
+    DOMAIN,
+    PRICE_SOURCE_AEMO,
+    PRICE_SOURCE_FLOWPOWER,
+)
 from .coordinator import FlowPowerCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -87,6 +99,63 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 
         hass.config_entries.async_update_entry(config_entry, data=new_data, version=2)
         _LOGGER.info("Migrated config entry from version 1 to version 2")
+
+    if config_entry.version == 2:
+        new_data = {**config_entry.data}
+        new_options = {**config_entry.options}
+        legacy_portal = any(
+            key in values
+            for values in (new_data, new_options)
+            for key in ("flowpower_email", "flowpower_password")
+        )
+
+        for values in (new_data, new_options):
+            values.pop("flowpower_email", None)
+            values.pop("flowpower_password", None)
+            values.pop("connect_flowpower", None)
+            values.pop("reauth_flowpower", None)
+
+        api_key = new_options.get(
+            CONF_FLOWPOWER_API_KEY,
+            new_data.get(CONF_FLOWPOWER_API_KEY),
+        )
+        if not api_key and new_options.get(
+            CONF_PRICE_SOURCE,
+            new_data.get(CONF_PRICE_SOURCE),
+        ) == PRICE_SOURCE_FLOWPOWER:
+            if CONF_PRICE_SOURCE in new_options:
+                new_options[CONF_PRICE_SOURCE] = PRICE_SOURCE_AEMO
+            else:
+                new_data[CONF_PRICE_SOURCE] = PRICE_SOURCE_AEMO
+
+        hass.config_entries.async_update_entry(
+            config_entry,
+            data=new_data,
+            options=new_options,
+            version=3,
+        )
+        await Store(hass, 1, f"{DOMAIN}.fp_session").async_remove()
+
+        # Do not carry portal-derived values into the official API cache. The
+        # next coordinator refresh repopulates it from Web Data Access.
+        await Store(hass, 1, f"{DOMAIN}.fp_portal_data").async_remove()
+
+        if legacy_portal and not api_key:
+            await Store(hass, 1, f"{DOMAIN}.fp_account_data").async_remove()
+            async_create_issue(
+                hass,
+                DOMAIN,
+                "web_data_api_required",
+                is_fixable=False,
+                severity=IssueSeverity.WARNING,
+                translation_key="web_data_api_required",
+            )
+        else:
+            async_delete_issue(hass, DOMAIN, "web_data_api_required")
+
+        _LOGGER.info(
+            "Migrated config entry to version 3: removed legacy Flow Power portal access"
+        )
 
     _LOGGER.debug("Migration to version %s successful", config_entry.version)
     return True

@@ -137,7 +137,7 @@ def calculate_import_price(
         "bpea_source": pricing_context.bpea_source if pricing_context else "default",
         "gst_multiplier": pricing_context.gst_multiplier if pricing_context else FLOW_POWER_GST,
         "gst_source": pricing_context.gst_source if pricing_context else "default",
-        "portal_pricing_active": pricing_context.portal_active if pricing_context else False,
+        "account_pricing_active": pricing_context.account_data_active if pricing_context else False,
         "final_cents": 0.0,
         "final_dollars": 0.0,
     }

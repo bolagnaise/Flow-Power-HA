@@ -120,9 +120,7 @@ CONF_PEA_ENABLED = "pea_enabled"
 CONF_PEA_CUSTOM_VALUE = "pea_custom_value"
 CONF_HAPPY_HOUR_EXPORT_RATE = "happy_hour_export_rate"
 
-# Flow Power Portal Configuration Keys
-CONF_FLOWPOWER_EMAIL = "flowpower_email"
-CONF_FLOWPOWER_PASSWORD = "flowpower_password"
+# Flow Power Web Data API configuration keys
 CONF_FLOWPOWER_API_KEY = "flowpower_api_key"
 CONF_FLOWPOWER_NMI = "flowpower_nmi"
 
@@ -142,25 +140,25 @@ SENSOR_TYPE_TWAP = "twap"
 SENSOR_TYPE_FLOWPOWER_ACCOUNT = "flowpower_account"
 SENSOR_TYPE_NETWORK_TARIFF = "network_tariff"
 
-# Portal account sensors — (sensor_type, name, data_key, unit, icon, source_label)
-# source_label: "portal" = direct from Flow Power, "calculated" = derived from portal data
-PORTAL_SENSORS = [
+# API account sensors — (sensor_type, name, data_key, unit, icon, source_label)
+# source_label: "api" = direct from Flow Power, "calculated" = derived from API data
+ACCOUNT_SENSORS = [
     # PEA metrics
-    ("account_pea", "Account PEA (Actual)", "pea_actual", "c/kWh", "mdi:account-cash", "portal"),
-    ("account_pea_30d", "Account PEA 30-Day", "pea_30_days", "c/kWh", "mdi:calendar-month", "portal"),
-    ("account_bpea", "Account BPEA (Benchmark)", "bpea", "c/kWh", "mdi:target", "portal"),
+    ("account_pea", "Account PEA (Actual)", "pea_actual", "c/kWh", "mdi:account-cash", "api"),
+    ("account_pea_30d", "Account PEA 30-Day", "pea_30_days", "c/kWh", "mdi:calendar-month", "api"),
+    ("account_bpea", "Account BPEA (Benchmark)", "bpea", "c/kWh", "mdi:target", "api"),
     ("account_cpea", "Account CPEA (Customer)", "cpea", "c/kWh", "mdi:account-arrow-right", "calculated"),
-    ("account_pea_import", "Account PEA Import", "pea_actual_import", "c/kWh", "mdi:import", "portal"),
+    ("account_pea_import", "Account PEA Import", "pea_actual_import", "c/kWh", "mdi:import", "api"),
     # Weighted average prices
-    ("account_lwap", "Account LWAP", "lwap", "c/kWh", "mdi:scale-balance", "portal"),
-    ("account_lwap_actual", "Account LWAP (Actual)", "lwap_actual", "c/kWh", "mdi:scale-balance", "portal"),
-    ("account_twap", "Account TWAP", "twap", "c/kWh", "mdi:chart-timeline-variant", "portal"),
-    ("account_avg_rrp", "Account Avg Spot Price", "avg_rrp", "c/kWh", "mdi:lightning-bolt", "portal"),
+    ("account_lwap", "Account LWAP", "lwap", "c/kWh", "mdi:scale-balance", "api"),
+    ("account_lwap_actual", "Account LWAP (Actual)", "lwap_actual", "c/kWh", "mdi:scale-balance", "api"),
+    ("account_twap", "Account TWAP", "twap", "c/kWh", "mdi:chart-timeline-variant", "api"),
+    ("account_avg_rrp", "Account Avg Spot Price", "avg_rrp", "c/kWh", "mdi:lightning-bolt", "api"),
     # Site factors
-    ("account_dlf", "Account DLF (Site Losses)", "site_losses_dlf", None, "mdi:transmission-tower", "portal"),
+    ("account_dlf", "Account DLF (Site Losses)", "site_losses_dlf", None, "mdi:transmission-tower", "api"),
     # Usage metrics
-    ("account_avg_usage", "Account Avg Demand", "avg_usage_kw", "kW", "mdi:flash-outline", "portal"),
-    ("account_max_usage", "Account Max Demand", "max_usage_kw", "kW", "mdi:flash-alert", "portal"),
+    ("account_avg_usage", "Account Avg Demand", "avg_usage_kw", "kW", "mdi:flash-outline", "api"),
+    ("account_max_usage", "Account Max Demand", "max_usage_kw", "kW", "mdi:flash-alert", "api"),
 ]
 
 # TWAP (Time Weighted Average Price) Settings
@@ -177,14 +175,6 @@ AEMO_PREDISPATCH_PRICES_URL = "https://visualisations.aemo.com.au/aemo/apps/api/
 AEMO_DISPATCH_URL = "https://nemweb.com.au/Reports/Current/DispatchIS_Reports/"
 AEMO_FORECAST_BASE_URL = "https://nemweb.com.au/Reports/Current/Predispatch_Reports/"
 
-# Flow Power Portal API URLs
-FLOWPOWER_BASE_URL = "https://flowpower.kwatch.com.au"
-FLOWPOWER_B2C_TENANT = "flowpowerb2c"
-FLOWPOWER_B2C_POLICY = "B2C_1A_SignUp_SignIn"
-FLOWPOWER_CLIENT_ID = "d2cbe375-637c-4067-9585-f05eeade9577"
-
-# Flow Power Portal update interval (account data changes slowly)
+# Flow Power account API update interval (account data changes slowly)
 UPDATE_INTERVAL_FLOWPOWER = 1800  # 30 minutes
-
-# Flow Power Portal: report GUIDs are fetched dynamically from /menu/allmenu
 # after login (they may be account-specific)

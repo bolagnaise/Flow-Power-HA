@@ -19,7 +19,6 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     CONF_FLOWPOWER_API_KEY,
-    CONF_FLOWPOWER_EMAIL,
     CONF_FLOWPOWER_NMI,
     CONF_HAPPY_HOUR_EXPORT_RATE,
     CONF_FP_NETWORK,
@@ -30,7 +29,7 @@ from .const import (
     FLOW_POWER_MARKET_AVG,
     HAPPY_HOUR_END,
     HAPPY_HOUR_START,
-    PORTAL_SENSORS,
+    ACCOUNT_SENSORS,
     PRICE_SOURCE_FLOWPOWER,
     SENSOR_TYPE_EXPORT_PRICE,
     SENSOR_TYPE_FLOWPOWER_ACCOUNT,
@@ -81,22 +80,20 @@ async def async_setup_entry(
         FlowPowerTWAPSensor(coordinator, config_entry, region),
     ]
 
-    # Add Flow Power portal sensors when portal credentials are configured
+    # Add Flow Power account sensors when the Web Data API can identify a site.
     merged = {**config_entry.data, **config_entry.options}
-    if merged.get(CONF_FLOWPOWER_EMAIL) or (
-        merged.get(CONF_FLOWPOWER_API_KEY) and merged.get(CONF_FLOWPOWER_NMI)
-    ):
+    if merged.get(CONF_FLOWPOWER_API_KEY) and merged.get(CONF_FLOWPOWER_NMI):
         # Keep the main Account PEA sensor (has all attributes)
         entities.append(
             FlowPowerAccountSensor(coordinator, config_entry, region)
         )
-        # Add individual portal sensors for each metric
-        for sensor_type, name, data_key, unit, icon, source in PORTAL_SENSORS:
+        # Add individual API account sensors for each metric.
+        for sensor_type, name, data_key, unit, icon, source in ACCOUNT_SENSORS:
             # Skip the main PEA — already covered by FlowPowerAccountSensor
             if data_key == "pea_actual":
                 continue
             entities.append(
-                FlowPowerPortalSensor(
+                FlowPowerAccountMetricSensor(
                     coordinator, config_entry, region,
                     sensor_type, name, data_key, unit, icon, source,
                 )
@@ -248,7 +245,7 @@ class FlowPowerImportPriceSensor(FlowPowerBaseSensor):
                 "bpea_source": price_info.get("bpea_source"),
                 "gst_multiplier": price_info.get("gst_multiplier"),
                 "gst_source": price_info.get("gst_source"),
-                "portal_pricing_active": price_info.get("portal_pricing_active"),
+                "account_pricing_active": price_info.get("account_pricing_active"),
                 "network_cents": price_info.get("network_tariff_rate"),
                 "avg_daily_tariff": price_info.get("avg_daily_tariff"),
                 "network_tou_adjustment_cents": price_info.get(
@@ -586,7 +583,7 @@ class FlowPowerTWAPSensor(FlowPowerBaseSensor):
 
 
 class FlowPowerAccountSensor(FlowPowerBaseSensor):
-    """Sensor for actual Flow Power account data from the portal.
+    """Sensor for actual Flow Power account data from the Web Data API.
 
     Exposes the real PEA, LWAP, TWAP, and other account-specific values
     directly from Flow Power's billing system, rather than calculated estimates.
@@ -690,8 +687,8 @@ class FlowPowerNetworkTariffSensor(FlowPowerBaseSensor):
         return attrs
 
 
-class FlowPowerPortalSensor(FlowPowerBaseSensor):
-    """Generic sensor for a single Flow Power portal metric."""
+class FlowPowerAccountMetricSensor(FlowPowerBaseSensor):
+    """Generic sensor for a single Flow Power API account metric."""
 
     _attr_state_class = SensorStateClass.MEASUREMENT
 
@@ -707,7 +704,7 @@ class FlowPowerPortalSensor(FlowPowerBaseSensor):
         icon: str,
         source: str,
     ) -> None:
-        """Initialize the portal sensor."""
+        """Initialize the API account sensor."""
         super().__init__(coordinator, config_entry, region, sensor_type)
         self._attr_name = name
         self._attr_native_unit_of_measurement = unit
@@ -718,7 +715,7 @@ class FlowPowerPortalSensor(FlowPowerBaseSensor):
 
     @property
     def native_value(self) -> float | None:
-        """Return the portal metric value."""
+        """Return the API account metric value."""
         if self.coordinator.data:
             fp_data = self.coordinator.data.get("flowpower_data")
             if fp_data:

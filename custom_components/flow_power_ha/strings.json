@@ -10,7 +10,7 @@
       },
       "flowpower_api_key": {
         "title": "Flow Power API",
-        "description": "Enter your KWatch API key from your Flow Power account page.",
+        "description": "Enter the API key from the Flow Power app under More > Web Data Access.",
         "data": {
           "flowpower_api_key": "API Key"
         }
@@ -20,21 +20,6 @@
         "description": "Select the residential site to use for account pricing summary data.",
         "data": {
           "flowpower_nmi": "Site"
-        }
-      },
-      "flowpower_login": {
-        "title": "Flow Power Login",
-        "description": "Enter your Flow Power portal credentials ({portal_url}). An SMS verification code will be sent to your registered phone number.",
-        "data": {
-          "flowpower_email": "Email",
-          "flowpower_password": "Password"
-        }
-      },
-      "flowpower_mfa": {
-        "title": "SMS Verification",
-        "description": "Enter the verification code sent to the phone number registered to {email}.",
-        "data": {
-          "mfa_code": "Verification Code"
         }
       },
       "region": {
@@ -83,11 +68,8 @@
     "error": {
       "cannot_connect": "Failed to connect to API",
       "invalid_api_key": "Invalid Flow Power API key",
-      "invalid_credentials": "Invalid Flow Power email or password",
-      "invalid_mfa_code": "Invalid verification code",
       "invalid_site": "Invalid Flow Power site",
       "invalid_tariff": "Could not load tariff data for the selected network and tariff code",
-      "mfa_verification_failed": "SMS verification failed — please try again",
       "no_sites": "No Flow Power sites or price data were available for this API key",
       "unknown": "Unexpected error"
     },
@@ -107,9 +89,7 @@
           "fp_twap_override": "TWAP Override (c/kWh)",
           "happy_hour_export_rate": "Happy Hour Export Rate ($/kWh)",
           "fp_network": "Electricity Distributor (DNSP)",
-          "flowpower_api_key": "Flow Power API Key",
-          "reauth_flowpower": "Re-authenticate with Flow Power portal",
-          "connect_flowpower": "Connect Flow Power portal account"
+          "flowpower_api_key": "Flow Power Web Data API Key"
         }
       },
       "flowpower_site_options": {
@@ -125,32 +105,13 @@
         "data": {
           "fp_tariff_code": "Tariff Code"
         }
-      },
-      "flowpower_reauth": {
-        "title": "Flow Power Re-authentication",
-        "description": "Re-enter your Flow Power portal credentials ({portal_url}) to refresh your session.",
-        "data": {
-          "flowpower_email": "Email",
-          "flowpower_password": "Password"
-        }
-      },
-      "flowpower_mfa": {
-        "title": "SMS Verification",
-        "description": "Enter the verification code sent to the phone number registered to {email}.",
-        "data": {
-          "mfa_code": "Verification Code"
-        }
       }
     }
   },
   "issues": {
-    "session_expired": {
-      "title": "Flow Power portal session expired",
-      "description": "Your Flow Power portal session has expired and account data (PEA, TWAP, LWAP) is no longer updating. Go to **Settings > Devices & Services > Flow Power HA > Configure** and toggle **Re-authenticate with Flow Power portal** to restore your session."
-    },
-    "session_expired_mfa": {
-      "title": "Flow Power session expired — SMS verification needed",
-      "description": "Your Flow Power session expired but credentials were re-submitted automatically. Go to **Settings > Devices & Services > Flow Power HA > Configure** and toggle **Re-authenticate with Flow Power portal** — you'll only need to enter the SMS verification code."
+    "web_data_api_required": {
+      "title": "Flow Power Web Data API key required",
+      "description": "Flow Power has retired automated customer-portal access. Your portal credentials and session cookies were removed. In the Flow Power app, go to **More > Web Data Access**, copy the API key, then open **Settings > Devices & Services > Flow Power HA > Configure** and enter it. AEMO-direct pricing continues while the key is missing, but Flow Power API prices and account metrics are unavailable."
     }
   },
   "entity": {
