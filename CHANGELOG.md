@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.6.17
+
+### Fix: Restore Price Sensor Statistics
+
+- Import and export price sensors now declare `state_class: measurement` without Home Assistant's monetary device class, restoring long-term statistics for the live `$/kWh` rate entities without reintroducing the unsupported `monetary + measurement` metadata combination.
+- Added regression coverage to keep the price-rate sensors statistics-capable while avoiding the monetary balance device class.
+
 ## v1.6.16
 
 ### Fix: Restore API Account Sensors After Portal Removal
