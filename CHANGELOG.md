@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.6.18
+
+### Fix: Restore AEMO Fallback After KWatch Fetch Failures
+
+- AEMO NEMWEB dispatch listing parsing now imports its regular-expression helper at module scope, preventing `name 're' is not defined` errors when KWatch pricing falls back to AEMO.
+- Added regression coverage for the dispatch-listing fallback path so missing or unavailable NEMWEB ZIP listings still return prices from AEMO's JSON summary API.
+
 ## v1.6.17
 
 ### Fix: Restore Price Sensor Statistics

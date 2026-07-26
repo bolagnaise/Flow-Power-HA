@@ -33,6 +33,7 @@ from flow_power_ha.flow_power_api import (  # noqa: E402
     probe_api_access,
     probe_residential_nmi,
 )
+from flow_power_ha.api_clients import AEMOClient  # noqa: E402
 
 
 class _FakeResponse:
@@ -77,6 +78,50 @@ class _FakeSession:
         return _FakeResponse(payload, status)
 
 
+class _FakeGetResponse:
+    def __init__(self, *, text_payload: str | None = None, json_payload=None, status: int = 200) -> None:
+        self._text_payload = text_payload
+        self._json_payload = json_payload
+        self.status = status
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return None
+
+    async def text(self) -> str:
+        return self._text_payload or ""
+
+    async def json(self, content_type=None):
+        return self._json_payload
+
+
+class _FakeAEMOSession:
+    closed = False
+
+    def __init__(self) -> None:
+        self.urls: list[str] = []
+
+    def get(self, url: str, **kwargs):
+        self.urls.append(url)
+        if "DispatchIS_Reports" in url:
+            return _FakeGetResponse(text_payload="<html>No current ZIP listing</html>")
+        return _FakeGetResponse(
+            json_payload={
+                "ELEC_NEM_SUMMARY": [
+                    {
+                        "REGIONID": "NSW1",
+                        "PRICE": "123.4",
+                        "SETTLEMENTDATE": "2026/07/26 11:25:00",
+                        "TOTALDEMAND": "7654",
+                        "PRICESTATUS": "FIRM",
+                    }
+                ]
+            }
+        )
+
+
 def test_import_price_exposes_network_tou_adjustment() -> None:
     price = calculate_import_price(
         wholesale_cents=20.0,
@@ -90,6 +135,19 @@ def test_import_price_exposes_network_tou_adjustment() -> None:
     assert price["network_tou_adjustment"] == 4.5
     assert price["price_without_network_tou_adjustment_cents"] == 43.3
     assert price["price_without_network_tou_adjustment_dollars"] == 0.433
+
+
+def test_aemo_dispatch_listing_falls_back_when_no_zip_files_are_listed() -> None:
+    session = _FakeAEMOSession()
+    client = AEMOClient(session)  # type: ignore[arg-type]
+
+    prices, is_new, filename = asyncio.run(client.get_current_prices_with_file())
+
+    assert is_new is False
+    assert filename == ""
+    assert prices["NSW1"]["price"] == 123.4
+    assert prices["NSW1"]["price_cents"] == 12.34
+    assert len(session.urls) == 2
 
 
 def test_pricing_context_uses_raw_wholesale_twap_for_pricing() -> None:
