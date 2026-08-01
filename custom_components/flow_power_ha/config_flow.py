@@ -21,10 +21,12 @@ from .const import (
     CONF_FP_TARIFF_CODE,
     CONF_FP_TWAP_OVERRIDE,
     CONF_NEM_REGION,
+    CONF_PLAN,
     CONF_PEA_CUSTOM_VALUE,
     CONF_PEA_ENABLED,
     CONF_PRICE_SOURCE,
     DEFAULT_BASE_RATE,
+    CURRENT_PLAN_OPTIONS,
     DOMAIN,
     FLOWPOWER_KWATCH_REGIONS,
     NETWORK_API_NAME,
@@ -32,6 +34,10 @@ from .const import (
     NEM_REGIONS,
     PRICE_SOURCE_AEMO,
     PRICE_SOURCE_FLOWPOWER,
+    PLAN_4FREE,
+    PLAN_FLOW_HOME,
+    PLAN_HAPPY_HOUR,
+    PLAN_LEGACY_HAPPY_HOUR,
     REGION_NETWORKS,
 )
 from .flow_power_api import (
@@ -42,6 +48,13 @@ from .flow_power_api import (
 from .tariff_utils import get_network_tariff_rate, get_tariff_codes_for_network
 
 _LOGGER = logging.getLogger(__name__)
+
+PLAN_LABELS = {
+    PLAN_FLOW_HOME: "Flow Home",
+    PLAN_HAPPY_HOUR: "Happy Hour",
+    PLAN_4FREE: "4Free",
+    PLAN_LEGACY_HAPPY_HOUR: "Legacy Happy Hour (pre-2026 behaviour)",
+}
 
 
 async def validate_flowpower_api_key(
@@ -83,7 +96,7 @@ def _flowpower_site_label(site: dict[str, Any]) -> str:
 class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Flow Power Sync."""
 
-    VERSION = 3
+    VERSION = 4
 
     def __init__(self) -> None:
         """Initialize the config flow."""
@@ -125,9 +138,7 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             self._data[CONF_NEM_REGION] = user_input[CONF_NEM_REGION]
             self._region = user_input[CONF_NEM_REGION]
-            if self._data.get(CONF_PRICE_SOURCE) == PRICE_SOURCE_FLOWPOWER and not self._data.get(CONF_FLOWPOWER_API_KEY):
-                return await self.async_step_flowpower_api_key()
-            return await self.async_step_tariff()
+            return await self.async_step_plan()
 
         region_options = [
             selector.SelectOptionDict(value=code, label=f"{code} - {name}")
@@ -140,6 +151,33 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_NEM_REGION, default="NSW1"): selector.SelectSelector(
                     selector.SelectSelectorConfig(
                         options=region_options,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+            }),
+        )
+
+    async def async_step_plan(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Select one of Flow Power's current residential plans."""
+        if user_input is not None:
+            self._data[CONF_PLAN] = user_input[CONF_PLAN]
+            if self._data.get(CONF_PRICE_SOURCE) == PRICE_SOURCE_FLOWPOWER and not self._data.get(CONF_FLOWPOWER_API_KEY):
+                return await self.async_step_flowpower_api_key()
+            return await self.async_step_tariff()
+
+        plan_options = [
+            selector.SelectOptionDict(value=plan, label=PLAN_LABELS[plan])
+            for plan in CURRENT_PLAN_OPTIONS
+        ]
+
+        return self.async_show_form(
+            step_id="plan",
+            data_schema=vol.Schema({
+                vol.Required(CONF_PLAN, default=PLAN_FLOW_HOME): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=plan_options,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
@@ -381,15 +419,6 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         mode=selector.NumberSelectorMode.BOX,
                     )
                 ),
-                vol.Optional(CONF_HAPPY_HOUR_EXPORT_RATE): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=0,
-                        max=1,
-                        step=0.01,
-                        unit_of_measurement="$/kWh",
-                        mode=selector.NumberSelectorMode.BOX,
-                    )
-                ),
             }),
         )
 
@@ -423,6 +452,12 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
             manual_nmi = str(user_input.get(CONF_FLOWPOWER_NMI, "")).strip()
 
             current = {**self.config_entry.data, **self.config_entry.options}
+            if CONF_HAPPY_HOUR_EXPORT_RATE not in user_input and current.get(
+                CONF_HAPPY_HOUR_EXPORT_RATE
+            ) is not None:
+                user_input[CONF_HAPPY_HOUR_EXPORT_RATE] = current[
+                    CONF_HAPPY_HOUR_EXPORT_RATE
+                ]
             effective_api_key = api_key or current.get(CONF_FLOWPOWER_API_KEY, "")
             if api_key:
                 result = await validate_flowpower_api_key(
@@ -514,8 +549,26 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
             for n in networks
         ]
 
+        current_plan = current.get(CONF_PLAN, PLAN_LEGACY_HAPPY_HOUR)
+        selectable_plans = list(CURRENT_PLAN_OPTIONS)
+        if current_plan == PLAN_LEGACY_HAPPY_HOUR:
+            selectable_plans.insert(0, PLAN_LEGACY_HAPPY_HOUR)
+        plan_options = [
+            selector.SelectOptionDict(value=plan, label=PLAN_LABELS[plan])
+            for plan in selectable_plans
+        ]
+
         # The Flow Power Web Data API is the only supported account connection.
         schema_fields: dict[Any, Any] = {
+            vol.Required(
+                CONF_PLAN,
+                default=current_plan,
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=plan_options,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            ),
             vol.Required(
                 CONF_BASE_RATE,
                 default=current.get(CONF_BASE_RATE, DEFAULT_BASE_RATE),
@@ -557,18 +610,6 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
                 )
             ),
             vol.Optional(
-                CONF_HAPPY_HOUR_EXPORT_RATE,
-                description={"suggested_value": current.get(CONF_HAPPY_HOUR_EXPORT_RATE)},
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0,
-                    max=1,
-                    step=0.01,
-                    unit_of_measurement="$/kWh",
-                    mode=selector.NumberSelectorMode.BOX,
-                )
-            ),
-            vol.Optional(
                 CONF_FP_NETWORK,
                 description={"suggested_value": current.get(CONF_FP_NETWORK, "")},
             ): selector.SelectSelector(
@@ -587,6 +628,26 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
                 description={"suggested_value": current.get(CONF_FLOWPOWER_NMI)},
             ): str,
         }
+
+        if current_plan == PLAN_LEGACY_HAPPY_HOUR:
+            schema_fields[
+                vol.Optional(
+                    CONF_HAPPY_HOUR_EXPORT_RATE,
+                    description={
+                        "suggested_value": current.get(
+                            CONF_HAPPY_HOUR_EXPORT_RATE
+                        )
+                    },
+                )
+            ] = selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0,
+                    max=1,
+                    step=0.01,
+                    unit_of_measurement="$/kWh",
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            )
 
         return vol.Schema(schema_fields)
 

@@ -23,12 +23,11 @@ from .const import (
     CONF_HAPPY_HOUR_EXPORT_RATE,
     CONF_FP_NETWORK,
     CONF_NEM_REGION,
+    CONF_PLAN,
     CONF_PRICE_SOURCE,
     DOMAIN,
-    FLOW_POWER_EXPORT_RATES,
     FLOW_POWER_MARKET_AVG,
-    HAPPY_HOUR_END,
-    HAPPY_HOUR_START,
+    PLAN_LEGACY_HAPPY_HOUR,
     ACCOUNT_SENSORS,
     PRICE_SOURCE_FLOWPOWER,
     SENSOR_TYPE_EXPORT_PRICE,
@@ -40,6 +39,7 @@ from .const import (
     SENSOR_TYPE_WHOLESALE_PRICE,
 )
 from .coordinator import FlowPowerCoordinator
+from .pricing import calculate_export_price
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -196,6 +196,10 @@ class FlowPowerBaseSensor(CoordinatorEntity[FlowPowerCoordinator], SensorEntity)
         minutes = duration_minutes if duration_minutes and duration_minutes > 0 else 30
         return dt - timedelta(minutes=minutes)
 
+    def _effective_config(self) -> dict[str, Any]:
+        """Return entry data with current options taking precedence."""
+        return {**self._config_entry.data, **self._config_entry.options}
+
 
 class FlowPowerImportPriceSensor(FlowPowerBaseSensor):
     """Sensor for current import price (with PEA)."""
@@ -234,7 +238,22 @@ class FlowPowerImportPriceSensor(FlowPowerBaseSensor):
         if self.coordinator.data and self.coordinator.data.get("import_price"):
             price_info = self.coordinator.data["import_price"]
             attrs.update({
+                "plan": price_info.get("plan"),
                 "price_cents": price_info.get("final_cents"),
+                "gross_price_cents": price_info.get("gross_final_cents"),
+                "gross_price_dollars": price_info.get("gross_final_dollars"),
+                "rate_min_cents": price_info.get("rate_min_cents"),
+                "rate_max_cents": price_info.get("rate_max_cents"),
+                "rate_min_dollars": price_info.get("rate_min_dollars"),
+                "rate_max_dollars": price_info.get("rate_max_dollars"),
+                "rate_is_exact": price_info.get("rate_is_exact"),
+                "calculation_basis": price_info.get("calculation_basis"),
+                "window_active": price_info.get("window_active"),
+                "cap_limit_kwh": price_info.get("cap_limit_kwh"),
+                "cap_used_kwh": price_info.get("cap_used_kwh"),
+                "cap_remaining_kwh": price_info.get("cap_remaining_kwh"),
+                "cap_status": price_info.get("cap_status"),
+                "uncertainty_reason": price_info.get("uncertainty_reason"),
                 "base_rate_cents": price_info.get("base_rate"),
                 "pea_cents": price_info.get("pea"),
                 "wholesale_cents": price_info.get("wholesale"),
@@ -261,12 +280,23 @@ class FlowPowerImportPriceSensor(FlowPowerBaseSensor):
         # Build forecast_dict for EMHASS
         if self.coordinator.data and self.coordinator.data.get("forecast"):
             forecast_dict = {}
+            forecast_rate_ranges = {}
             for period in self.coordinator.data["forecast"]:
                 raw_ts = period.get("timestamp", "")
                 iso_ts = self._convert_to_iso_timestamp(raw_ts)
                 if iso_ts:
                     forecast_dict[iso_ts] = period.get("price_dollars", 0)
+                    forecast_rate_ranges[iso_ts] = {
+                        "minimum": period.get("rate_min_dollars"),
+                        "maximum": period.get("rate_max_dollars"),
+                        "is_exact": period.get("rate_is_exact"),
+                        "basis": period.get("calculation_basis"),
+                        "window_active": period.get("window_active"),
+                        "cap_status": period.get("cap_status"),
+                        "uncertainty_reason": period.get("uncertainty_reason"),
+                    }
             attrs["forecast_dict"] = forecast_dict
+            attrs["forecast_rate_ranges"] = forecast_rate_ranges
 
         if self.coordinator.data:
             attrs["last_update"] = self.coordinator.data.get("last_update")
@@ -299,22 +329,19 @@ class FlowPowerExportPriceSensor(FlowPowerBaseSensor):
         """Initialize the export price sensor."""
         super().__init__(coordinator, config_entry, region, SENSOR_TYPE_EXPORT_PRICE)
 
+    def _get_export_quote_for_time(self, dt: datetime) -> dict[str, Any]:
+        """Calculate a conservative plan-aware export quote for a time."""
+        config = self._effective_config()
+        return calculate_export_price(
+            self._region,
+            current_time=dt,
+            happy_hour_rate_override=config.get(CONF_HAPPY_HOUR_EXPORT_RATE),
+            plan=config.get(CONF_PLAN, PLAN_LEGACY_HAPPY_HOUR),
+        )
+
     def _get_export_price_for_time(self, dt: datetime) -> float:
-        """Calculate export price for a specific time (Happy Hour aware)."""
-        local_time = dt.time()
-        is_happy_hour = HAPPY_HOUR_START <= local_time < HAPPY_HOUR_END
-        if is_happy_hour:
-            configured_rate = (
-                {**self._config_entry.data, **self._config_entry.options}.get(
-                    CONF_HAPPY_HOUR_EXPORT_RATE
-                )
-            )
-            return (
-                configured_rate
-                if configured_rate is not None
-                else FLOW_POWER_EXPORT_RATES.get(self._region, 0.0)
-            )
-        return 0.0
+        """Return the conservative export price for a specific time."""
+        return self._get_export_quote_for_time(dt)["export_dollars"]
 
     @property
     def native_value(self) -> float | None:
@@ -335,24 +362,51 @@ class FlowPowerExportPriceSensor(FlowPowerBaseSensor):
         if self.coordinator.data and self.coordinator.data.get("export_price"):
             export_info = self.coordinator.data["export_price"]
             attrs.update({
+                "plan": export_info.get("plan"),
                 "price_cents": export_info.get("export_cents"),
                 "is_happy_hour": export_info.get("is_happy_hour"),
                 "happy_hour_rate": export_info.get("happy_hour_rate"),
                 "happy_hour_start": export_info.get("happy_hour_start"),
                 "happy_hour_end": export_info.get("happy_hour_end"),
+                "rate_min_cents": export_info.get("rate_min_cents"),
+                "rate_max_cents": export_info.get("rate_max_cents"),
+                "rate_min_dollars": export_info.get("rate_min_dollars"),
+                "rate_max_dollars": export_info.get("rate_max_dollars"),
+                "rate_is_exact": export_info.get("rate_is_exact"),
+                "calculation_basis": export_info.get("calculation_basis"),
+                "window_active": export_info.get("window_active"),
+                "cap_limit_kwh": export_info.get("cap_limit_kwh"),
+                "cap_used_kwh": export_info.get("cap_used_kwh"),
+                "cap_remaining_kwh": export_info.get("cap_remaining_kwh"),
+                "cap_status": export_info.get("cap_status"),
+                "uncertainty_reason": export_info.get("uncertainty_reason"),
             })
 
         # Build forecast_dict for EMHASS (export prices based on Happy Hour)
         if self.coordinator.data and self.coordinator.data.get("forecast"):
             forecast_dict = {}
+            forecast_rate_ranges = {}
             for period in self.coordinator.data["forecast"]:
                 raw_ts = period.get("timestamp", "")
                 iso_ts = self._convert_to_iso_timestamp(raw_ts)
-                dt = self._parse_timestamp_to_datetime(raw_ts)
+                dt = self._forecast_period_start(
+                    raw_ts,
+                    period.get("duration_minutes"),
+                )
                 if iso_ts and dt:
-                    export_price = self._get_export_price_for_time(dt)
-                    forecast_dict[iso_ts] = export_price
+                    quote = self._get_export_quote_for_time(dt)
+                    forecast_dict[iso_ts] = quote["export_dollars"]
+                    forecast_rate_ranges[iso_ts] = {
+                        "minimum": quote.get("rate_min_dollars"),
+                        "maximum": quote.get("rate_max_dollars"),
+                        "is_exact": quote.get("rate_is_exact"),
+                        "basis": quote.get("calculation_basis"),
+                        "window_active": quote.get("window_active"),
+                        "cap_status": quote.get("cap_status"),
+                        "uncertainty_reason": quote.get("uncertainty_reason"),
+                    }
             attrs["forecast_dict"] = forecast_dict
+            attrs["forecast_rate_ranges"] = forecast_rate_ranges
 
         return attrs
 

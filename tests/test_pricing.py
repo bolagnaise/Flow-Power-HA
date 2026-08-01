@@ -20,6 +20,14 @@ from flow_power_ha.pricing import (  # noqa: E402
     calculate_export_price,
     calculate_forecast_prices,
     calculate_import_price,
+    quote_export_rate,
+    quote_import_rate,
+)
+from flow_power_ha.const import (  # noqa: E402
+    PLAN_4FREE,
+    PLAN_FLOW_HOME,
+    PLAN_HAPPY_HOUR,
+    PLAN_LEGACY_HAPPY_HOUR,
 )
 from flow_power_ha.flow_power_pricing import (  # noqa: E402
     calculate_flow_power_pea,
@@ -656,6 +664,208 @@ def test_export_price_supports_happy_hour_override() -> None:
     assert price["export_dollars"] == 0.5
 
 
+def test_legacy_happy_hour_keeps_original_window_and_override() -> None:
+    before = quote_export_rate(
+        plan=PLAN_LEGACY_HAPPY_HOUR,
+        region="QLD1",
+        current_time=datetime.fromisoformat("2026-08-01T17:29:59+10:00"),
+        legacy_override_rate=0.5,
+    )
+    during = quote_export_rate(
+        plan=PLAN_LEGACY_HAPPY_HOUR,
+        region="QLD1",
+        current_time=datetime.fromisoformat("2026-08-01T17:30:00+10:00"),
+        legacy_override_rate=0.5,
+    )
+    after = quote_export_rate(
+        plan=PLAN_LEGACY_HAPPY_HOUR,
+        region="QLD1",
+        current_time=datetime.fromisoformat("2026-08-01T19:30:00+10:00"),
+        legacy_override_rate=0.5,
+    )
+
+    assert before.rate == 0.0
+    assert during.rate == 50.0
+    assert during.is_exact is True
+    assert during.cap_status == "not_applicable"
+    assert after.rate == 0.0
+
+
+def test_flow_home_export_is_exact_and_uncapped() -> None:
+    quote = quote_export_rate(
+        plan=PLAN_FLOW_HOME,
+        region="VIC1",
+        current_time=datetime.fromisoformat("2026-08-01T03:00:00+10:00"),
+    )
+
+    assert quote.rate == 2.0
+    assert quote.rate_min == 2.0
+    assert quote.rate_max == 2.0
+    assert quote.is_exact is True
+    assert quote.cap_limit_kwh is None
+
+    unsupported = quote_export_rate(
+        plan=PLAN_FLOW_HOME,
+        region="TAS1",
+        current_time=datetime.fromisoformat("2026-08-01T03:00:00+10:00"),
+    )
+    assert unsupported.rate == 0.0
+
+
+def test_happy_hour_unknown_cap_uses_guaranteed_lower_tier() -> None:
+    quote = quote_export_rate(
+        plan=PLAN_HAPPY_HOUR,
+        region="QLD1",
+        current_time=datetime.fromisoformat("2026-08-01T21:29:59+10:00"),
+    )
+
+    assert quote.rate == 10.0
+    assert quote.rate_min == 10.0
+    assert quote.rate_max == 35.0
+    assert quote.is_exact is False
+    assert quote.cap_limit_kwh == 15.0
+    assert quote.cap_used_kwh is None
+    assert quote.cap_remaining_kwh is None
+    assert quote.cap_status == "unknown"
+
+    ended = quote_export_rate(
+        plan=PLAN_HAPPY_HOUR,
+        region="QLD1",
+        current_time=datetime.fromisoformat("2026-08-01T21:30:00+10:00"),
+    )
+    assert ended.rate == 0.0
+    assert ended.is_exact is True
+    assert ended.cap_status == "not_active"
+
+
+def test_happy_hour_known_usage_switches_at_exact_cap() -> None:
+    before_cap = quote_export_rate(
+        plan=PLAN_HAPPY_HOUR,
+        region="VIC1",
+        current_time=datetime.fromisoformat("2026-08-01T18:00:00+10:00"),
+        exported_this_window_kwh=14.999,
+    )
+    at_cap = quote_export_rate(
+        plan=PLAN_HAPPY_HOUR,
+        region="VIC1",
+        current_time=datetime.fromisoformat("2026-08-01T18:00:00+10:00"),
+        exported_this_window_kwh=15.0,
+    )
+
+    assert before_cap.rate == 30.0
+    assert before_cap.cap_remaining_kwh == 0.001
+    assert at_cap.rate == 10.0
+    assert at_cap.cap_remaining_kwh == 0.0
+    assert at_cap.is_exact is True
+
+
+def test_4free_import_unknown_cap_is_conservative() -> None:
+    quote = quote_import_rate(
+        plan=PLAN_4FREE,
+        region="NSW1",
+        gross_rate=41.36,
+        current_time=datetime.fromisoformat("2026-08-01T11:00:00+10:00"),
+    )
+
+    assert quote.rate == 41.36
+    assert quote.rate_min == 0.0
+    assert quote.rate_max == 41.36
+    assert quote.is_exact is False
+    assert quote.cap_limit_kwh == 8.0
+    assert quote.cap_used_kwh is None
+    assert quote.cap_remaining_kwh is None
+    assert quote.cap_status == "unknown"
+
+
+def test_4free_import_allowance_resets_each_hour_and_ends_at_3pm() -> None:
+    eligible = quote_import_rate(
+        plan=PLAN_4FREE,
+        region="SA1",
+        gross_rate=40.0,
+        current_time=datetime.fromisoformat("2026-08-01T12:00:00+09:30"),
+        imported_this_hour_kwh=7.999,
+    )
+    exhausted = quote_import_rate(
+        plan=PLAN_4FREE,
+        region="SA1",
+        gross_rate=40.0,
+        current_time=datetime.fromisoformat("2026-08-01T12:59:59+09:30"),
+        imported_this_hour_kwh=8.0,
+    )
+    ended = quote_import_rate(
+        plan=PLAN_4FREE,
+        region="SA1",
+        gross_rate=40.0,
+        current_time=datetime.fromisoformat("2026-08-01T15:00:00+09:30"),
+        imported_this_hour_kwh=0.0,
+    )
+
+    assert eligible.rate == 0.0
+    assert eligible.cap_remaining_kwh == 0.001
+    assert exhausted.rate == 40.0
+    assert exhausted.cap_remaining_kwh == 0.0
+    assert ended.rate == 40.0
+    assert ended.cap_status == "not_active"
+
+
+def test_4free_export_unknown_and_known_cap_rates() -> None:
+    unknown = quote_export_rate(
+        plan=PLAN_4FREE,
+        region="VIC1",
+        current_time=datetime.fromisoformat("2026-08-01T17:30:00+10:00"),
+    )
+    premium = quote_export_rate(
+        plan=PLAN_4FREE,
+        region="QLD1",
+        current_time=datetime.fromisoformat("2026-08-01T18:00:00+10:00"),
+        exported_this_window_kwh=4.0,
+    )
+    lower = quote_export_rate(
+        plan=PLAN_4FREE,
+        region="QLD1",
+        current_time=datetime.fromisoformat("2026-08-01T18:00:00+10:00"),
+        exported_this_window_kwh=15.0,
+    )
+
+    assert (unknown.rate, unknown.rate_min, unknown.rate_max) == (2.0, 2.0, 17.0)
+    assert premium.rate == 20.0
+    assert lower.rate == 5.0
+
+
+def test_4free_forecast_keeps_conservative_state_and_range() -> None:
+    forecast = calculate_forecast_prices(
+        [
+            {
+                "nemTime": "2026-08-01T11:30:00+10:00",
+                "perKwh": 10.0,
+                "duration": 30,
+            }
+        ],
+        base_rate=34.0,
+        pea_enabled=False,
+        plan=PLAN_4FREE,
+        region="QLD1",
+    )
+
+    assert forecast[0]["price_cents"] == 34.0
+    assert forecast[0]["rate_min_cents"] == 0.0
+    assert forecast[0]["rate_max_cents"] == 34.0
+    assert forecast[0]["rate_is_exact"] is False
+    assert forecast[0]["cap_status"] == "unknown"
+
+
+def test_plan_forecast_skips_period_without_a_usable_timestamp() -> None:
+    forecast = calculate_forecast_prices(
+        [{"nemTime": "not-a-time", "perKwh": 10.0, "duration": 30}],
+        base_rate=34.0,
+        pea_enabled=False,
+        plan=PLAN_4FREE,
+        region="QLD1",
+    )
+
+    assert forecast == []
+
+
 def test_config_flow_and_coordinator_wire_kwatch_api_paths() -> None:
     config_flow_source = (COMPONENT_ROOT / "config_flow.py").read_text()
     coordinator_source = (COMPONENT_ROOT / "coordinator.py").read_text()
@@ -700,10 +910,25 @@ def test_legacy_portal_transport_is_removed_and_migrated() -> None:
         assert forbidden not in config_source
         assert forbidden not in coordinator_source
 
-    assert "VERSION = 3" in config_source
+    assert "VERSION = 4" in config_source
     assert "if config_entry.version == 2:" in init_source
+    assert "if config_entry.version == 3:" in init_source
+    assert "new_data[CONF_PLAN] = PLAN_LEGACY_HAPPY_HOUR" in init_source
     assert 'values.pop("flowpower_email", None)' in init_source
     assert 'values.pop("flowpower_password", None)' in init_source
     assert 'f"{DOMAIN}.fp_session"' in init_source
     assert "web_data_api_required" in init_source
     assert "flow_power_account_data" in coordinator_source
+
+
+def test_current_plan_selection_is_wired_without_exposing_legacy_to_new_entries() -> None:
+    config_source = (COMPONENT_ROOT / "config_flow.py").read_text()
+    coordinator_source = (COMPONENT_ROOT / "coordinator.py").read_text()
+    sensor_source = (COMPONENT_ROOT / "sensor.py").read_text()
+
+    assert "async def async_step_plan" in config_source
+    assert "for plan in CURRENT_PLAN_OPTIONS" in config_source
+    assert "self.plan = config.get(CONF_PLAN, PLAN_LEGACY_HAPPY_HOUR)" in coordinator_source
+    assert "data[\"import_price\"] = self._calculate_import_price" in coordinator_source
+    assert "plan=self.plan" in coordinator_source
+    assert '"forecast_rate_ranges"' in sensor_source

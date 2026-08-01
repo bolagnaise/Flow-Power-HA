@@ -98,6 +98,56 @@ FLOW_POWER_EXPORT_RATES = {
 HAPPY_HOUR_START = time(17, 30)  # 5:30 PM
 HAPPY_HOUR_END = time(19, 30)    # 7:30 PM
 
+# Current Flow Power residential plans. Existing entries are migrated to the
+# internal legacy plan so their historical 5:30-7:30 uncapped export behaviour
+# does not silently change.
+CONF_PLAN = "plan"
+PLAN_FLOW_HOME = "flow_home"
+PLAN_HAPPY_HOUR = "happy_hour"
+PLAN_4FREE = "4free"
+PLAN_LEGACY_HAPPY_HOUR = "legacy_happy_hour"
+CURRENT_PLAN_OPTIONS = (PLAN_FLOW_HOME, PLAN_HAPPY_HOUR, PLAN_4FREE)
+
+# Current-plan windows and caps.
+CURRENT_EXPORT_WINDOW_START = time(17, 30)
+CURRENT_EXPORT_WINDOW_END = time(21, 30)
+CURRENT_EXPORT_PREMIUM_CAP_KWH = 15.0
+FOUR_FREE_IMPORT_START = time(11, 0)
+FOUR_FREE_IMPORT_END = time(15, 0)
+FOUR_FREE_IMPORT_HOURLY_CAP_KWH = 8.0
+
+# Rates are cents/kWh. Tasmania remains unsupported by the current residential
+# offers and therefore falls back to zero.
+FLOW_HOME_EXPORT_RATES_CENTS = {
+    "NSW1": 2.0,
+    "QLD1": 2.0,
+    "SA1": 2.0,
+    "VIC1": 2.0,
+    "TAS1": 0.0,
+}
+HAPPY_HOUR_PREMIUM_EXPORT_RATES_CENTS = {
+    "NSW1": 35.0,
+    "QLD1": 35.0,
+    "SA1": 35.0,
+    "VIC1": 30.0,
+    "TAS1": 0.0,
+}
+HAPPY_HOUR_LOWER_EXPORT_RATE_CENTS = 10.0
+FOUR_FREE_PREMIUM_EXPORT_RATES_CENTS = {
+    "NSW1": 20.0,
+    "QLD1": 20.0,
+    "SA1": 20.0,
+    "VIC1": 17.0,
+    "TAS1": 0.0,
+}
+FOUR_FREE_LOWER_EXPORT_RATES_CENTS = {
+    "NSW1": 5.0,
+    "QLD1": 5.0,
+    "SA1": 5.0,
+    "VIC1": 2.0,
+    "TAS1": 0.0,
+}
+
 # Price Sources
 PRICE_SOURCE_AEMO = "aemo"
 PRICE_SOURCE_FLOWPOWER = "flowpower"

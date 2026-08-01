@@ -1,20 +1,246 @@
 """Flow Power pricing calculations including PEA and export rates."""
 from __future__ import annotations
 
-from datetime import datetime, time, timedelta
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from math import isfinite
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from .const import (
+    CURRENT_EXPORT_PREMIUM_CAP_KWH,
+    CURRENT_EXPORT_WINDOW_END,
+    CURRENT_EXPORT_WINDOW_START,
     FLOW_POWER_BENCHMARK,
     FLOW_POWER_DEFAULT_BASE_RATE,
     FLOW_POWER_EXPORT_RATES,
     FLOW_POWER_GST,
     FLOW_POWER_MARKET_AVG,
+    FLOW_HOME_EXPORT_RATES_CENTS,
+    FOUR_FREE_IMPORT_END,
+    FOUR_FREE_IMPORT_HOURLY_CAP_KWH,
+    FOUR_FREE_IMPORT_START,
+    FOUR_FREE_LOWER_EXPORT_RATES_CENTS,
+    FOUR_FREE_PREMIUM_EXPORT_RATES_CENTS,
+    HAPPY_HOUR_LOWER_EXPORT_RATE_CENTS,
+    HAPPY_HOUR_PREMIUM_EXPORT_RATES_CENTS,
     HAPPY_HOUR_END,
     HAPPY_HOUR_START,
+    PLAN_4FREE,
+    PLAN_FLOW_HOME,
+    PLAN_HAPPY_HOUR,
+    PLAN_LEGACY_HAPPY_HOUR,
 )
 from .flow_power_pricing import FlowPowerPricingContext, calculate_flow_power_pea
+
+
+REGION_TIMEZONES = {
+    "NSW1": "Australia/Sydney",
+    "QLD1": "Australia/Brisbane",
+    "VIC1": "Australia/Melbourne",
+    "SA1": "Australia/Adelaide",
+    "TAS1": "Australia/Hobart",
+}
+
+
+@dataclass(frozen=True)
+class RateQuote:
+    """A conservative current or forecast tariff quote in cents/kWh."""
+
+    rate: float
+    rate_min: float
+    rate_max: float
+    is_exact: bool
+    calculation_basis: str
+    window_active: bool
+    cap_limit_kwh: float | None
+    cap_used_kwh: float | None
+    cap_remaining_kwh: float | None
+    cap_status: str
+    uncertainty_reason: str | None
+
+
+def _local_datetime(
+    current_time: datetime | None,
+    region: str,
+    timezone: str | None = None,
+) -> datetime:
+    """Return a timestamp in the plan's local timezone."""
+    tz = ZoneInfo(timezone or REGION_TIMEZONES.get(region, "Australia/Sydney"))
+    if current_time is None:
+        return datetime.now(tz)
+    if current_time.tzinfo is None:
+        return current_time.replace(tzinfo=tz)
+    return current_time.astimezone(tz)
+
+
+def _known_usage(value: float | None) -> float | None:
+    """Return a usable non-negative cumulative energy value."""
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not isfinite(parsed) or parsed < 0:
+        return None
+    return parsed
+
+
+def _exact_quote(
+    rate: float,
+    *,
+    window_active: bool,
+    cap_limit_kwh: float | None = None,
+    cap_used_kwh: float | None = None,
+    cap_remaining_kwh: float | None = None,
+    cap_status: str = "not_applicable",
+) -> RateQuote:
+    """Build an exact quote."""
+    rounded = round(max(0.0, rate), 4)
+    return RateQuote(
+        rate=rounded,
+        rate_min=rounded,
+        rate_max=rounded,
+        is_exact=True,
+        calculation_basis="exact",
+        window_active=window_active,
+        cap_limit_kwh=cap_limit_kwh,
+        cap_used_kwh=cap_used_kwh,
+        cap_remaining_kwh=cap_remaining_kwh,
+        cap_status=cap_status,
+        uncertainty_reason=None,
+    )
+
+
+def quote_import_rate(
+    *,
+    plan: str,
+    region: str,
+    gross_rate: float,
+    current_time: datetime | None = None,
+    timezone: str | None = None,
+    imported_this_hour_kwh: float | None = None,
+) -> RateQuote:
+    """Quote the effective import rate without inventing 4Free allowance state."""
+    gross = round(max(0.0, float(gross_rate)), 4)
+    local_dt = _local_datetime(current_time, region, timezone)
+    in_free_window = FOUR_FREE_IMPORT_START <= local_dt.time() < FOUR_FREE_IMPORT_END
+
+    if plan != PLAN_4FREE:
+        return _exact_quote(gross, window_active=False)
+    if not in_free_window:
+        return _exact_quote(
+            gross,
+            window_active=False,
+            cap_limit_kwh=FOUR_FREE_IMPORT_HOURLY_CAP_KWH,
+            cap_status="not_active",
+        )
+
+    used = _known_usage(imported_this_hour_kwh)
+    if used is None:
+        return RateQuote(
+            rate=gross,
+            rate_min=0.0,
+            rate_max=gross,
+            is_exact=False,
+            calculation_basis="conservative_maximum",
+            window_active=True,
+            cap_limit_kwh=FOUR_FREE_IMPORT_HOURLY_CAP_KWH,
+            cap_used_kwh=None,
+            cap_remaining_kwh=None,
+            cap_status="unknown",
+            uncertainty_reason="hourly_import_usage_unavailable",
+        )
+
+    remaining = round(max(0.0, FOUR_FREE_IMPORT_HOURLY_CAP_KWH - used), 4)
+    rate = 0.0 if used < FOUR_FREE_IMPORT_HOURLY_CAP_KWH else gross
+    return _exact_quote(
+        rate,
+        window_active=True,
+        cap_limit_kwh=FOUR_FREE_IMPORT_HOURLY_CAP_KWH,
+        cap_used_kwh=round(used, 4),
+        cap_remaining_kwh=remaining,
+        cap_status="known",
+    )
+
+
+def quote_export_rate(
+    *,
+    plan: str,
+    region: str,
+    current_time: datetime | None = None,
+    timezone: str | None = None,
+    legacy_override_rate: float | None = None,
+    exported_this_window_kwh: float | None = None,
+) -> RateQuote:
+    """Quote an export rate, using the guaranteed tier when cap usage is unknown."""
+    local_dt = _local_datetime(current_time, region, timezone)
+    local_time = local_dt.time()
+
+    if plan == PLAN_FLOW_HOME:
+        return _exact_quote(
+            FLOW_HOME_EXPORT_RATES_CENTS.get(region, 0.0),
+            window_active=True,
+        )
+
+    if plan == PLAN_LEGACY_HAPPY_HOUR:
+        active = HAPPY_HOUR_START <= local_time < HAPPY_HOUR_END
+        legacy_rate = (
+            float(legacy_override_rate) * 100
+            if legacy_override_rate is not None
+            else FLOW_POWER_EXPORT_RATES.get(region, 0.0) * 100
+        )
+        return _exact_quote(legacy_rate if active else 0.0, window_active=active)
+
+    active = CURRENT_EXPORT_WINDOW_START <= local_time < CURRENT_EXPORT_WINDOW_END
+    if plan == PLAN_HAPPY_HOUR:
+        premium = HAPPY_HOUR_PREMIUM_EXPORT_RATES_CENTS.get(region, 0.0)
+        lower = HAPPY_HOUR_LOWER_EXPORT_RATE_CENTS if premium > 0 else 0.0
+    elif plan == PLAN_4FREE:
+        premium = FOUR_FREE_PREMIUM_EXPORT_RATES_CENTS.get(region, 0.0)
+        lower = FOUR_FREE_LOWER_EXPORT_RATES_CENTS.get(region, 0.0)
+    else:
+        return _exact_quote(0.0, window_active=False)
+
+    if not active:
+        return _exact_quote(
+            0.0,
+            window_active=False,
+            cap_limit_kwh=CURRENT_EXPORT_PREMIUM_CAP_KWH,
+            cap_status="not_active",
+        )
+
+    used = _known_usage(exported_this_window_kwh)
+    if used is None:
+        return RateQuote(
+            rate=round(lower, 4),
+            rate_min=round(lower, 4),
+            rate_max=round(premium, 4),
+            is_exact=lower == premium,
+            calculation_basis=(
+                "exact" if lower == premium else "conservative_minimum"
+            ),
+            window_active=True,
+            cap_limit_kwh=CURRENT_EXPORT_PREMIUM_CAP_KWH,
+            cap_used_kwh=None,
+            cap_remaining_kwh=None,
+            cap_status="unknown" if lower != premium else "not_applicable",
+            uncertainty_reason=(
+                None if lower == premium else "window_export_usage_unavailable"
+            ),
+        )
+
+    remaining = round(max(0.0, CURRENT_EXPORT_PREMIUM_CAP_KWH - used), 4)
+    rate = premium if used < CURRENT_EXPORT_PREMIUM_CAP_KWH else lower
+    return _exact_quote(
+        rate,
+        window_active=True,
+        cap_limit_kwh=CURRENT_EXPORT_PREMIUM_CAP_KWH,
+        cap_used_kwh=round(used, 4),
+        cap_remaining_kwh=remaining,
+        cap_status="known",
+    )
 
 
 def calculate_pea(
@@ -82,7 +308,12 @@ def calculate_import_price(
     network_tariff_rate: float | None = None,
     avg_daily_tariff: float | None = None,
     pricing_context: FlowPowerPricingContext | None = None,
-) -> dict[str, float]:
+    plan: str = PLAN_LEGACY_HAPPY_HOUR,
+    region: str = "NSW1",
+    current_time: datetime | None = None,
+    timezone: str | None = None,
+    imported_this_hour_kwh: float | None = None,
+) -> dict[str, Any]:
     """Calculate the final import price using Flow Power PEA formula.
 
     Final Rate = Base Rate + PEA
@@ -172,11 +403,39 @@ def calculate_import_price(
             without_network_tou / 100, 4
         )
 
-    # Ensure non-negative (Tesla restriction)
-    final_cents = max(0.0, raw_final_cents)
+    # Ensure non-negative (Tesla restriction), then apply the selected plan's
+    # effective-rate overlay. For an untracked 4Free allowance the numeric state
+    # remains the conservative maximum and the possible zero rate is exposed in
+    # the quote range.
+    gross_final_cents = max(0.0, raw_final_cents)
+    quote = quote_import_rate(
+        plan=plan,
+        region=region,
+        gross_rate=gross_final_cents,
+        current_time=current_time,
+        timezone=timezone,
+        imported_this_hour_kwh=imported_this_hour_kwh,
+    )
 
-    result["final_cents"] = round(final_cents, 2)
-    result["final_dollars"] = round(final_cents / 100, 4)
+    result["plan"] = plan
+    result["gross_final_cents"] = round(gross_final_cents, 2)
+    result["gross_final_dollars"] = round(gross_final_cents / 100, 4)
+    result["final_cents"] = round(quote.rate, 2)
+    result["final_dollars"] = round(quote.rate / 100, 4)
+    result.update({
+        "rate_min_cents": round(quote.rate_min, 2),
+        "rate_max_cents": round(quote.rate_max, 2),
+        "rate_min_dollars": round(quote.rate_min / 100, 4),
+        "rate_max_dollars": round(quote.rate_max / 100, 4),
+        "rate_is_exact": quote.is_exact,
+        "calculation_basis": quote.calculation_basis,
+        "window_active": quote.window_active,
+        "cap_limit_kwh": quote.cap_limit_kwh,
+        "cap_used_kwh": quote.cap_used_kwh,
+        "cap_remaining_kwh": quote.cap_remaining_kwh,
+        "cap_status": quote.cap_status,
+        "uncertainty_reason": quote.uncertainty_reason,
+    })
 
     return result
 
@@ -186,72 +445,50 @@ def calculate_export_price(
     current_time: datetime | None = None,
     timezone: str | None = None,
     happy_hour_rate_override: float | None = None,
+    plan: str = PLAN_LEGACY_HAPPY_HOUR,
+    exported_this_window_kwh: float | None = None,
 ) -> dict[str, Any]:
-    """Calculate the export price based on Happy Hour and region.
-
-    Happy Hour: 5:30pm - 7:30pm local time
-    Rates: NSW1/QLD1/SA1 = 45c, VIC1 = 35c, others = 0c
-
-    Args:
-        region: NEM region code (NSW1, QLD1, VIC1, SA1, TAS1)
-        current_time: Optional datetime for testing (defaults to now)
-        timezone: Optional timezone string (defaults based on region)
-        happy_hour_rate_override: Optional per-config Happy Hour rate in $/kWh
-
-    Returns:
-        Dict with export price info:
-        {
-            'export_cents': 45.0,      # Export price in c/kWh
-            'export_dollars': 0.45,    # Export price in $/kWh
-            'is_happy_hour': True,     # Whether currently in Happy Hour
-            'happy_hour_rate': 0.45,   # Happy Hour rate for region
-            'region': 'NSW1',
-        }
-    """
-    # Determine timezone
-    if timezone is None:
-        timezone_map = {
-            "NSW1": "Australia/Sydney",
-            "QLD1": "Australia/Brisbane",
-            "VIC1": "Australia/Melbourne",
-            "SA1": "Australia/Adelaide",
-            "TAS1": "Australia/Hobart",
-        }
-        timezone = timezone_map.get(region, "Australia/Sydney")
-
-    # Get current time in local timezone
-    tz = ZoneInfo(timezone)
-    if current_time is None:
-        current_time = datetime.now(tz)
-    elif current_time.tzinfo is None:
-        current_time = current_time.replace(tzinfo=tz)
-
-    local_time = current_time.astimezone(tz).time()
-
-    # Check if in Happy Hour window
-    is_happy_hour = HAPPY_HOUR_START <= local_time < HAPPY_HOUR_END
-
-    # Get Happy Hour rate for region
-    happy_hour_rate = (
-        happy_hour_rate_override
-        if happy_hour_rate_override is not None
-        else FLOW_POWER_EXPORT_RATES.get(region, 0.0)
+    """Calculate a conservative plan-aware export price for the region."""
+    quote = quote_export_rate(
+        plan=plan,
+        region=region,
+        current_time=current_time,
+        timezone=timezone,
+        legacy_override_rate=happy_hour_rate_override,
+        exported_this_window_kwh=exported_this_window_kwh,
     )
 
-    # Calculate export price
-    if is_happy_hour:
-        export_cents = happy_hour_rate * 100  # Convert $/kWh to c/kWh
+    if plan == PLAN_LEGACY_HAPPY_HOUR:
+        window_start = HAPPY_HOUR_START
+        window_end = HAPPY_HOUR_END
+    elif plan in (PLAN_HAPPY_HOUR, PLAN_4FREE):
+        window_start = CURRENT_EXPORT_WINDOW_START
+        window_end = CURRENT_EXPORT_WINDOW_END
     else:
-        export_cents = 0.0
+        window_start = None
+        window_end = None
 
     return {
-        "export_cents": export_cents,
-        "export_dollars": export_cents / 100,
-        "is_happy_hour": is_happy_hour,
-        "happy_hour_rate": happy_hour_rate,
+        "plan": plan,
+        "export_cents": round(quote.rate, 2),
+        "export_dollars": round(quote.rate / 100, 4),
+        "is_happy_hour": quote.window_active,
+        "happy_hour_rate": round(quote.rate_max / 100, 4),
         "region": region,
-        "happy_hour_start": HAPPY_HOUR_START.strftime("%H:%M"),
-        "happy_hour_end": HAPPY_HOUR_END.strftime("%H:%M"),
+        "happy_hour_start": window_start.strftime("%H:%M") if window_start else None,
+        "happy_hour_end": window_end.strftime("%H:%M") if window_end else None,
+        "rate_min_cents": round(quote.rate_min, 2),
+        "rate_max_cents": round(quote.rate_max, 2),
+        "rate_min_dollars": round(quote.rate_min / 100, 4),
+        "rate_max_dollars": round(quote.rate_max / 100, 4),
+        "rate_is_exact": quote.is_exact,
+        "calculation_basis": quote.calculation_basis,
+        "window_active": quote.window_active,
+        "cap_limit_kwh": quote.cap_limit_kwh,
+        "cap_used_kwh": quote.cap_used_kwh,
+        "cap_remaining_kwh": quote.cap_remaining_kwh,
+        "cap_status": quote.cap_status,
+        "uncertainty_reason": quote.uncertainty_reason,
     }
 
 
@@ -264,6 +501,8 @@ def calculate_forecast_prices(
     tariff_schedule: dict[int, float] | None = None,
     avg_daily_tariff: float | None = None,
     pricing_context: FlowPowerPricingContext | None = None,
+    plan: str = PLAN_LEGACY_HAPPY_HOUR,
+    region: str = "NSW1",
 ) -> list[dict[str, Any]]:
     """Calculate import prices for a forecast array.
 
@@ -298,25 +537,27 @@ def calculate_forecast_prices(
         else:
             continue
 
+        # Forecast timestamps identify the end of the interval. Plan windows and
+        # tariff schedules both apply to the interval start.
+        timestamp = period.get("nemTime") or period.get("startTime") or ""
+        interval_minutes = int(period.get("duration", 30) or 30)
+        interval_start: datetime | None = None
+        if timestamp:
+            try:
+                interval_start = datetime.fromisoformat(timestamp.replace("/", "-"))
+                interval_start -= timedelta(minutes=interval_minutes)
+            except (ValueError, TypeError):
+                interval_start = None
+        if interval_start is None:
+            # An interval with no usable time cannot be placed into a plan or
+            # network-tariff window without inventing a result.
+            continue
+
         # Determine per-period network tariff rate from schedule
         network_tariff_rate: float | None = None
-        if tariff_schedule is not None:
-            timestamp_str = period.get("nemTime") or period.get("startTime") or ""
-            if timestamp_str:
-                try:
-                    # AEMO PERIODID format: "2026/04/01 13:30:00"
-                    # Also handle ISO format: "2026-04-01T13:30:00"
-                    ts = timestamp_str.replace("/", "-")
-                    dt = datetime.fromisoformat(ts)
-                    interval_minutes = int(period.get("duration", 30) or 30)
-                    # Forecast timestamps represent the end of the interval, while
-                    # tariff schedules are keyed by the interval being priced.
-                    dt = dt - timedelta(minutes=interval_minutes)
-                    # Half-hour slot: 0-47 (hour * 2 + minute // 30)
-                    slot_index = dt.hour * 2 + dt.minute // 30
-                    network_tariff_rate = tariff_schedule.get(slot_index)
-                except (ValueError, TypeError):
-                    pass
+        if tariff_schedule is not None and interval_start is not None:
+            slot_index = interval_start.hour * 2 + interval_start.minute // 30
+            network_tariff_rate = tariff_schedule.get(slot_index)
 
         # Calculate final price
         price_info = calculate_import_price(
@@ -328,16 +569,31 @@ def calculate_forecast_prices(
             network_tariff_rate=network_tariff_rate,
             avg_daily_tariff=avg_daily_tariff,
             pricing_context=pricing_context,
+            plan=plan,
+            region=region,
+            current_time=interval_start,
         )
-
-        # Extract timestamp
-        timestamp = period.get("nemTime") or period.get("startTime") or ""
 
         results.append({
             "timestamp": timestamp,
-            "duration_minutes": int(period.get("duration", 30) or 30),
+            "duration_minutes": interval_minutes,
             "price_dollars": price_info["final_dollars"],
             "price_cents": price_info["final_cents"],
+            "gross_price_dollars": price_info["gross_final_dollars"],
+            "gross_price_cents": price_info["gross_final_cents"],
+            "plan": price_info["plan"],
+            "rate_min_dollars": price_info["rate_min_dollars"],
+            "rate_max_dollars": price_info["rate_max_dollars"],
+            "rate_min_cents": price_info["rate_min_cents"],
+            "rate_max_cents": price_info["rate_max_cents"],
+            "rate_is_exact": price_info["rate_is_exact"],
+            "calculation_basis": price_info["calculation_basis"],
+            "window_active": price_info["window_active"],
+            "cap_limit_kwh": price_info["cap_limit_kwh"],
+            "cap_used_kwh": price_info["cap_used_kwh"],
+            "cap_remaining_kwh": price_info["cap_remaining_kwh"],
+            "cap_status": price_info["cap_status"],
+            "uncertainty_reason": price_info["uncertainty_reason"],
             "wholesale_cents": wholesale_cents,
             "pea": price_info["pea"],
             "network_tariff_rate": network_tariff_rate,

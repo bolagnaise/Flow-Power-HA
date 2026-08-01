@@ -26,10 +26,12 @@ except ImportError:
 
 from .const import (
     CONF_FLOWPOWER_API_KEY,
+    CONF_PLAN,
     CONF_PRICE_SOURCE,
     DOMAIN,
     PRICE_SOURCE_AEMO,
     PRICE_SOURCE_FLOWPOWER,
+    PLAN_LEGACY_HAPPY_HOUR,
 )
 from .coordinator import FlowPowerCoordinator
 
@@ -155,6 +157,24 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 
         _LOGGER.info(
             "Migrated config entry to version 3: removed legacy Flow Power portal access"
+        )
+
+    if config_entry.version == 3:
+        new_data = {**config_entry.data}
+        new_options = {**config_entry.options}
+        if CONF_PLAN not in new_data and CONF_PLAN not in new_options:
+            # Preserve the integration's historical 17:30-19:30 uncapped
+            # export behaviour until the user explicitly chooses a new plan.
+            new_data[CONF_PLAN] = PLAN_LEGACY_HAPPY_HOUR
+
+        hass.config_entries.async_update_entry(
+            config_entry,
+            data=new_data,
+            options=new_options,
+            version=4,
+        )
+        _LOGGER.info(
+            "Migrated config entry to version 4 with explicit legacy plan semantics"
         )
 
     _LOGGER.debug("Migration to version %s successful", config_entry.version)

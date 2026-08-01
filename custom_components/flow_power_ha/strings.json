@@ -36,6 +36,13 @@
           "nem_region": "Region"
         }
       },
+      "plan": {
+        "title": "Flow Power Plan",
+        "description": "Select the plan shown on your current Flow Power agreement. Capped benefits are reported conservatively when interval usage is unavailable.",
+        "data": {
+          "plan": "Electricity Plan"
+        }
+      },
       "tariff": {
         "title": "Electricity Distributor",
         "description": "Select your electricity distributor to enable time-of-use pricing. Skip to use a flat base rate.",
@@ -61,14 +68,14 @@
           "pea_enabled": "Enable PEA Calculation",
           "pea_custom_value": "Custom PEA Value (c/kWh)",
           "fp_twap_override": "TWAP Override (c/kWh)",
-          "happy_hour_export_rate": "Happy Hour Export Rate ($/kWh)"
+          "happy_hour_export_rate": "Legacy Happy Hour Export Rate ($/kWh)"
         },
         "data_description": {
           "base_rate": "Your Flow Power base energy rate (GST inclusive)",
           "pea_enabled": "Apply Price Efficiency Adjustment using raw wholesale TWAP with available Flow Power account GST, BPEA, and network tariff inputs",
           "pea_custom_value": "Override calculated PEA with a fixed value",
           "fp_twap_override": "Override the rolling raw wholesale TWAP with a fixed value. Leave empty for automatic pricing.",
-          "happy_hour_export_rate": "Optional override for plans with a non-standard Happy Hour export rate"
+          "happy_hour_export_rate": "Only used by migrated legacy configurations; current plans use their published regional rates"
         }
       }
     },
@@ -90,11 +97,12 @@
         "title": "Flow Power Settings",
         "description": "Adjust your pricing configuration. Enter rates as they appear in your PDS (GST inclusive).",
         "data": {
+          "plan": "Electricity Plan",
           "base_rate": "Base Rate (c/kWh)",
           "pea_enabled": "Enable PEA Calculation",
           "pea_custom_value": "Custom PEA Value (c/kWh)",
           "fp_twap_override": "TWAP Override (c/kWh)",
-          "happy_hour_export_rate": "Happy Hour Export Rate ($/kWh)",
+          "happy_hour_export_rate": "Legacy Happy Hour Export Rate ($/kWh)",
           "fp_network": "Electricity Distributor (DNSP)",
           "flowpower_api_key": "Flow Power Web Data API Key",
           "flowpower_nmi": "Account NMI (optional)"

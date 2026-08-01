@@ -19,6 +19,7 @@ from .const import (
     CONF_FLOWPOWER_API_KEY,
     CONF_FLOWPOWER_NMI,
     CONF_HAPPY_HOUR_EXPORT_RATE,
+    CONF_PLAN,
     CONF_FP_NETWORK,
     CONF_FP_TARIFF_CODE,
     CONF_NEM_REGION,
@@ -33,6 +34,9 @@ from .const import (
     NETWORK_API_NAME,
     PRICE_SOURCE_AEMO,
     PRICE_SOURCE_FLOWPOWER,
+    PLAN_4FREE,
+    PLAN_HAPPY_HOUR,
+    PLAN_LEGACY_HAPPY_HOUR,
     UPDATE_INTERVAL_CURRENT,
     UPDATE_INTERVAL_FLOWPOWER,
 )
@@ -90,6 +94,7 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.pea_enabled = config.get(CONF_PEA_ENABLED, True)
         self.pea_custom_value = config.get(CONF_PEA_CUSTOM_VALUE)
         self.happy_hour_export_rate = config.get(CONF_HAPPY_HOUR_EXPORT_RATE)
+        self.plan = config.get(CONF_PLAN, PLAN_LEGACY_HAPPY_HOUR)
 
         # Network tariff config
         self._fp_network = config.get(CONF_FP_NETWORK)
@@ -132,20 +137,39 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._setup_time_listeners()
 
     # ------------------------------------------------------------------
-    # Time listeners (Happy Hour + tariff refresh)
+    # Time listeners (plan boundaries + tariff refresh)
     # ------------------------------------------------------------------
 
     def _setup_time_listeners(self) -> None:
-        """Set up clock-aligned time listeners for Happy Hour and tariff refresh."""
-        # Happy Hour transitions: Update exactly at 17:30:00 and 19:30:00
-        unsub_happy_hour = async_track_time_change(
-            self.hass,
-            self._handle_happy_hour_update,
-            hour=[17, 19],
-            minute=[30],
-            second=[0],
-        )
-        self._unsub_time_listeners.append(unsub_happy_hour)
+        """Set up exact plan-boundary and tariff refresh listeners."""
+        export_boundaries: tuple[tuple[int, int], ...] = ()
+        if self.plan == PLAN_LEGACY_HAPPY_HOUR:
+            export_boundaries = ((17, 30), (19, 30))
+        elif self.plan in (PLAN_HAPPY_HOUR, PLAN_4FREE):
+            export_boundaries = ((17, 30), (21, 30))
+
+        for hour, minute in export_boundaries:
+            self._unsub_time_listeners.append(
+                async_track_time_change(
+                    self.hass,
+                    self._handle_plan_transition,
+                    hour=hour,
+                    minute=minute,
+                    second=0,
+                )
+            )
+
+        if self.plan == PLAN_4FREE:
+            for hour in (11, 12, 13, 14, 15):
+                self._unsub_time_listeners.append(
+                    async_track_time_change(
+                        self.hass,
+                        self._handle_plan_transition,
+                        hour=hour,
+                        minute=0,
+                        second=0,
+                    )
+                )
 
         # Network tariff refresh: every 5 minutes
         if self._fp_network and self._fp_tariff_code:
@@ -158,15 +182,28 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._unsub_time_listeners.append(unsub_tariff)
 
         _LOGGER.info(
-            "Flow Power: Happy Hour listener registered at 17:30/19:30; "
-            "adaptive polling replaces fixed 30-second AEMO timer"
+            "Flow Power: plan boundary listeners registered for %s; "
+            "adaptive polling replaces fixed 30-second AEMO timer",
+            self.plan,
         )
 
     @callback
-    def _handle_happy_hour_update(self, now: datetime) -> None:
-        """Handle Happy Hour transition update."""
-        _LOGGER.info("Flow Power: Happy Hour transition update at %s", now)
-        self.hass.async_create_task(self.async_request_refresh())
+    def _handle_plan_transition(self, now: datetime) -> None:
+        """Recalculate prices exactly when a selected-plan window changes."""
+        _LOGGER.info("Flow Power: %s plan transition update at %s", self.plan, now)
+        if not self.data:
+            self.hass.async_create_task(self.async_request_refresh())
+            return
+
+        data = dict(self.data)
+        wholesale_cents = data.get("wholesale_price")
+        if wholesale_cents is not None:
+            data["import_price"] = self._calculate_import_price(
+                wholesale_cents,
+                current_time=now,
+            )
+        data["export_price"] = self._calculate_export_price(current_time=now)
+        self._publish_manual_data_update(data)
 
     @callback
     def _handle_tariff_refresh(self, now: datetime) -> None:
@@ -208,6 +245,7 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         network_tariff_rate: float,
     ) -> dict[str, Any] | None:
         """Return current coordinator data with import price recalculated."""
+        self._network_tariff_rate = network_tariff_rate
         if not self.data:
             return None
 
@@ -222,16 +260,41 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if wholesale_cents is None:
             return data
 
-        data["import_price"] = calculate_import_price(
+        data["import_price"] = self._calculate_import_price(wholesale_cents)
+        return data
+
+    def _calculate_import_price(
+        self,
+        wholesale_cents: float,
+        *,
+        current_time: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Calculate the selected plan's conservative effective import quote."""
+        return calculate_import_price(
             wholesale_cents=wholesale_cents,
             base_rate=self.base_rate,
             pea_enabled=self.pea_enabled,
             pea_custom_value=self.pea_custom_value,
-            network_tariff_rate=network_tariff_rate,
+            network_tariff_rate=self._network_tariff_rate,
             avg_daily_tariff=self._avg_daily_tariff,
             pricing_context=self._pricing_context(),
+            plan=self.plan,
+            region=self.region,
+            current_time=current_time,
         )
-        return data
+
+    def _calculate_export_price(
+        self,
+        *,
+        current_time: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Calculate the selected plan's conservative effective export quote."""
+        return calculate_export_price(
+            self.region,
+            current_time=current_time,
+            happy_hour_rate_override=self.happy_hour_export_rate,
+            plan=self.plan,
+        )
 
     def _pricing_context(self) -> FlowPowerPricingContext:
         """Resolve the effective Flow Power pricing inputs for this update."""
@@ -457,14 +520,18 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if self.fp_api_enabled and self.fp_nmi:
                 await self._fetch_flowpower_api_data(data)
 
+            # Plan windows can change while the underlying wholesale interval is
+            # unchanged. Reapply the plan overlay on every coordinator cycle.
+            if data["wholesale_price"] is not None:
+                data["import_price"] = self._calculate_import_price(
+                    data["wholesale_price"]
+                )
+
             # KWatch API pricing is the primary Flow Power path when an API key
             # is configured. If it fails, fall through to the existing AEMO path.
             if self.fp_api_enabled:
                 if await self._fetch_kwatch_price_data(data):
-                    data["export_price"] = calculate_export_price(
-                        self.region,
-                        happy_hour_rate_override=self.happy_hour_export_rate,
-                    )
+                    data["export_price"] = self._calculate_export_price()
                     return data
 
             # Decide whether to hit NEMWEB this cycle.
@@ -472,10 +539,7 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             if not should_fetch:
                 # Export price is time-based — keep it current even in WAIT mode.
-                data["export_price"] = calculate_export_price(
-                    self.region,
-                    happy_hour_rate_override=self.happy_hour_export_rate,
-                )
+                data["export_price"] = self._calculate_export_price()
                 return data
 
             # Fetch current prices based on source
@@ -509,15 +573,7 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
                     pricing_context = self._pricing_context()
 
-                    import_info = calculate_import_price(
-                        wholesale_cents=wholesale_cents,
-                        base_rate=self.base_rate,
-                        pea_enabled=self.pea_enabled,
-                        pea_custom_value=self.pea_custom_value,
-                        network_tariff_rate=self._network_tariff_rate,
-                        avg_daily_tariff=self._avg_daily_tariff,
-                        pricing_context=pricing_context,
-                    )
+                    import_info = self._calculate_import_price(wholesale_cents)
 
                     data["import_price"] = import_info
                     data["wholesale_price"] = wholesale_cents
@@ -555,6 +611,8 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             tariff_schedule=self._tariff_schedule,
                             avg_daily_tariff=self._avg_daily_tariff,
                             pricing_context=pricing_context,
+                            plan=self.plan,
+                            region=self.region,
                         )
                         _LOGGER.info("Calculated forecast periods: %d", len(data["forecast"]))
 
@@ -589,10 +647,7 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                 )
 
             # Export price is always recalculated (time-based)
-            data["export_price"] = calculate_export_price(
-                self.region,
-                happy_hour_rate_override=self.happy_hour_export_rate,
-            )
+            data["export_price"] = self._calculate_export_price()
 
             return data
 
@@ -643,15 +698,7 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         data["twap_samples"] = len(self._price_history)
         pricing_context = self._pricing_context()
 
-        import_info = calculate_import_price(
-            wholesale_cents=wholesale_cents,
-            base_rate=self.base_rate,
-            pea_enabled=self.pea_enabled,
-            pea_custom_value=self.pea_custom_value,
-            network_tariff_rate=self._network_tariff_rate,
-            avg_daily_tariff=self._avg_daily_tariff,
-            pricing_context=pricing_context,
-        )
+        import_info = self._calculate_import_price(wholesale_cents)
 
         data["import_price"] = import_info
         data["wholesale_price"] = wholesale_cents
@@ -675,6 +722,8 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 tariff_schedule=self._tariff_schedule,
                 avg_daily_tariff=self._avg_daily_tariff,
                 pricing_context=pricing_context,
+                plan=self.plan,
+                region=self.region,
             )
 
         self._next_boundary = self._calc_next_boundary()

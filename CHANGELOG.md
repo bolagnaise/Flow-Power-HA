@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.7.0
+
+### Feature: Flow Home, Happy Hour, and 4Free Plan Pricing
+
+- Added explicit plan selection for Flow Home, Happy Hour, and 4Free, including the current regional export windows, rates, and tier caps.
+- Added conservative min/max quote metadata for benefits whose remaining capped usage is unavailable from the Flow Power Web Data API; no usage counter is inferred from coordinator refreshes or account averages.
+- Added plan-aware live and forecast pricing, exact window-boundary refreshes, and sensor attributes for calculation basis, cap status, and uncertainty.
+- Existing entries migrate to an explicit legacy plan so the former 5:30pm-7:30pm uncapped Happy Hour behaviour and override remain unchanged until a current plan is selected.
+
 ## v1.6.18
 
 ### Fix: Restore AEMO Fallback After KWatch Fetch Failures

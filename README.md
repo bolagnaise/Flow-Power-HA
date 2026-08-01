@@ -8,7 +8,7 @@ A Home Assistant integration for Flow Power electricity pricing sensors, compati
 - **Flow Power API**: Uses an API key to fetch KWatch prices and account values such as PEA, LWAP, and TWAP
 - **Network Tariff (TOU)**: Select your electricity distributor and tariff code — network charges are applied to both current prices and forecasts
 - **PEA Calculation**: Implements Flow Power's Price Efficiency Adjustment formula
-- **Happy Hour Export**: Automatic export pricing based on Flow Power Happy Hour (5:30pm-7:30pm)
+- **Current Flow Power Plans**: Plan-aware import/export pricing for Flow Home, Happy Hour, and 4Free
 - **Optimizer Compatible**: Price forecast sensor with attributes for EMHASS and HAEO
 - **Dynamic TWAP**: Auto-calculated 30-day rolling wholesale average for accurate PEA
 - **ApexCharts Ready**: Pre-built data series for charting actual vs forecast prices
@@ -36,6 +36,20 @@ A Home Assistant integration for Flow Power electricity pricing sensors, compati
 Choose between:
 - **AEMO (Direct wholesale)**: Fetches prices directly from AEMO NEMWeb
 - **Flow Power API (KWatch)**: Uses the API key from **Flow Power App > More > Web Data Access** for current prices, forecasts, and available account-summary data. AEMO remains the fallback if a transient API price request fails.
+
+### Electricity Plan
+
+Select the plan shown on your current Flow Power agreement:
+
+| Plan | Import benefit | Export benefit |
+|------|----------------|----------------|
+| Flow Home | Base rate plus PEA | 2 c/kWh all day |
+| Happy Hour | Base rate plus PEA | 5:30pm-9:30pm; first 15 kWh at 35 c/kWh in NSW/QLD/SA or 30 c/kWh in VIC, then 10 c/kWh |
+| 4Free | First 8 kWh in each separate hour from 11am-3pm is credited back | 5:30pm-9:30pm; first 15 kWh at 20 c/kWh in NSW/QLD/SA or 17 c/kWh in VIC, then 5 c/kWh or 2 c/kWh respectively |
+
+The Web Data API does not currently provide the interval import/export totals needed to know how much of a capped benefit remains. The integration therefore does not invent a counter: during 4Free import hours it reports the gross import price as the safe state, and during capped export windows it reports the guaranteed lower tier. The `rate_min_*`, `rate_max_*`, `rate_is_exact`, `cap_status`, and `uncertainty_reason` attributes expose the full range and why it is uncertain. Forecasts provide the same information in `forecast_rate_ranges`.
+
+Entries created before plan selection was added are migrated to **Legacy Happy Hour** so their previous 5:30pm-7:30pm uncapped export behaviour remains unchanged. Choose a current plan from the integration options when ready.
 
 ### Network Tariff (TOU Pricing)
 
@@ -71,6 +85,7 @@ Some valid keys provide prices even when residential-site discovery is temporari
 
 | Option | Default | Description |
 |--------|---------|-------------|
+| Electricity Plan | Flow Home | Flow Home, Happy Hour, or 4Free |
 | Base Rate | 34.0 c/kWh | Your Flow Power base energy rate (GST inclusive, as per PDS) |
 | PEA Enabled | Yes | Apply Price Efficiency Adjustment |
 | PEA Custom Value | - | Override calculated PEA with fixed value (c/kWh) |
@@ -82,7 +97,7 @@ Some valid keys provide prices even when residential-site discovery is temporari
 | Sensor | Unit | Description |
 |--------|------|-------------|
 | `sensor.flow_power_<region>_import_price` | $/kWh | Current import price with PEA and network tariff |
-| `sensor.flow_power_<region>_export_price` | $/kWh | Current export price (Happy Hour aware) |
+| `sensor.flow_power_<region>_export_price` | $/kWh | Conservative current export price for the selected plan |
 | `sensor.flow_power_<region>_wholesale_price` | c/kWh | Raw wholesale spot price |
 | `sensor.flow_power_<region>_price_forecast` | $/kWh | Price forecast for EMHASS and HAEO |
 | `sensor.flow_power_<region>_twap` | c/kWh | 30-day rolling average wholesale price (TWAP) |
@@ -245,17 +260,9 @@ If the Flow Power app's **Price of energy** differs by roughly this amount, comp
 
 `price_without_network_tou_adjustment_cents` removes only the current network tariff swing. It still includes the same BPEA and GST inputs as the full import price, so it will not necessarily match the plain regional `sensor.flow_power_<region>_import_price` unless those account inputs happen to align.
 
-### Export Rates (Happy Hour)
+### Capped Rate Attributes
 
-| Region | Happy Hour Rate |
-|--------|----------------|
-| NSW1 | 45 c/kWh |
-| QLD1 | 45 c/kWh |
-| SA1 | 45 c/kWh |
-| VIC1 | 35 c/kWh |
-| TAS1 | 0 c/kWh |
-
-Happy Hour: 5:30pm - 7:30pm local time
+Both live price sensors expose the selected `plan`, the conservative numeric state, `rate_min_dollars`, `rate_max_dollars`, `rate_is_exact`, and cap metadata. Automations that require a guaranteed cost or credit can use the sensor state. Display cards can show the range when `rate_is_exact` is false.
 
 ## Support
 

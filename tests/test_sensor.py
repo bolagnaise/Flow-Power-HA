@@ -74,6 +74,7 @@ from flow_power_ha.sensor import (  # noqa: E402
     FlowPowerForecastSensor,
     FlowPowerImportPriceSensor,
 )
+from flow_power_ha.pricing import calculate_export_price  # noqa: E402
 
 
 def test_parse_timestamp_to_datetime_accepts_iso_values() -> None:
@@ -99,6 +100,86 @@ def test_export_price_uses_configured_happy_hour_override() -> None:
 
     assert sensor._get_export_price_for_time(in_happy_hour) == 0.5
     assert sensor._get_export_price_for_time(outside_happy_hour) == 0.0
+
+
+def test_happy_hour_forecast_uses_interval_start_and_exposes_uncertainty() -> None:
+    sensor = object.__new__(FlowPowerExportPriceSensor)
+    sensor._region = "QLD1"
+    sensor._config_entry = SimpleNamespace(
+        data={"plan": "happy_hour"},
+        options={},
+    )
+    sensor.coordinator = SimpleNamespace(
+        data={
+            "forecast": [
+                {
+                    # The interval is 21:15-21:45, so it is still in-window.
+                    "timestamp": "2026-08-01T21:45:00+10:00",
+                    "duration_minutes": 30,
+                }
+            ],
+            "export_price": calculate_export_price(
+                "QLD1",
+                current_time=datetime.fromisoformat("2026-08-01T18:00:00+10:00"),
+                plan="happy_hour",
+            ),
+        }
+    )
+
+    attrs = sensor.extra_state_attributes
+    timestamp = "2026-08-01T21:45:00+10:00"
+
+    assert attrs["forecast_dict"][timestamp] == 0.1
+    assert attrs["forecast_rate_ranges"][timestamp] == {
+        "minimum": 0.1,
+        "maximum": 0.35,
+        "is_exact": False,
+        "basis": "conservative_minimum",
+        "window_active": True,
+        "cap_status": "unknown",
+        "uncertainty_reason": "window_export_usage_unavailable",
+    }
+    assert attrs["rate_is_exact"] is False
+    assert attrs["cap_status"] == "unknown"
+
+
+def test_4free_import_attributes_keep_safe_state_and_full_range() -> None:
+    sensor = object.__new__(FlowPowerImportPriceSensor)
+    sensor._region = "NSW1"
+    sensor.coordinator = SimpleNamespace(
+        data={
+            "import_price": {
+                "plan": "4free",
+                "final_dollars": 0.4,
+                "final_cents": 40.0,
+                "gross_final_dollars": 0.4,
+                "gross_final_cents": 40.0,
+                "rate_min_dollars": 0.0,
+                "rate_max_dollars": 0.4,
+                "rate_min_cents": 0.0,
+                "rate_max_cents": 40.0,
+                "rate_is_exact": False,
+                "calculation_basis": "conservative_maximum",
+                "window_active": True,
+                "cap_limit_kwh": 8.0,
+                "cap_used_kwh": None,
+                "cap_remaining_kwh": None,
+                "cap_status": "unknown",
+                "uncertainty_reason": "hourly_import_usage_unavailable",
+            },
+            "forecast": [],
+        },
+        _import_price_history=[],
+    )
+
+    attrs = sensor.extra_state_attributes
+
+    assert sensor.native_value == 0.4
+    assert attrs["gross_price_dollars"] == 0.4
+    assert attrs["rate_min_dollars"] == 0.0
+    assert attrs["rate_max_dollars"] == 0.4
+    assert attrs["rate_is_exact"] is False
+    assert attrs["uncertainty_reason"] == "hourly_import_usage_unavailable"
 
 
 def test_price_rate_sensors_are_statistical_measurements_not_monetary_balances() -> None:
