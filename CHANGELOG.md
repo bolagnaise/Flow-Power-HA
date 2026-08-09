@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.7.1
+
+### Fix: Align Export Forecast Keys To Interval Starts
+
+- Export price `forecast_dict` entries now use the priced interval start as the timestamp key, matching the quote time used for Happy Hour and legacy Happy Hour window checks.
+- This restores legacy Happy Hour forecast buckets to 17:30, 18:00, 18:30, and 19:00 for the 17:30-19:30 window, instead of shifting the non-zero export prices 30 minutes late.
+- Added regression coverage for the legacy Happy Hour override case reported in #35.
+
 ## v1.7.0
 
 ### Feature: Flow Home, Happy Hour, and 4Free Plan Pricing

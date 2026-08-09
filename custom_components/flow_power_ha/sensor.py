@@ -388,15 +388,15 @@ class FlowPowerExportPriceSensor(FlowPowerBaseSensor):
             forecast_rate_ranges = {}
             for period in self.coordinator.data["forecast"]:
                 raw_ts = period.get("timestamp", "")
-                iso_ts = self._convert_to_iso_timestamp(raw_ts)
                 dt = self._forecast_period_start(
                     raw_ts,
                     period.get("duration_minutes"),
                 )
-                if iso_ts and dt:
+                if dt:
+                    forecast_ts = dt.isoformat()
                     quote = self._get_export_quote_for_time(dt)
-                    forecast_dict[iso_ts] = quote["export_dollars"]
-                    forecast_rate_ranges[iso_ts] = {
+                    forecast_dict[forecast_ts] = quote["export_dollars"]
+                    forecast_rate_ranges[forecast_ts] = {
                         "minimum": quote.get("rate_min_dollars"),
                         "maximum": quote.get("rate_max_dollars"),
                         "is_exact": quote.get("rate_is_exact"),

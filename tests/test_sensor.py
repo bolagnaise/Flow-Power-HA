@@ -127,7 +127,7 @@ def test_happy_hour_forecast_uses_interval_start_and_exposes_uncertainty() -> No
     )
 
     attrs = sensor.extra_state_attributes
-    timestamp = "2026-08-01T21:45:00+10:00"
+    timestamp = "2026-08-01T21:15:00+10:00"
 
     assert attrs["forecast_dict"][timestamp] == 0.1
     assert attrs["forecast_rate_ranges"][timestamp] == {
@@ -141,6 +141,52 @@ def test_happy_hour_forecast_uses_interval_start_and_exposes_uncertainty() -> No
     }
     assert attrs["rate_is_exact"] is False
     assert attrs["cap_status"] == "unknown"
+
+
+def test_legacy_happy_hour_export_forecast_keys_use_interval_start() -> None:
+    sensor = object.__new__(FlowPowerExportPriceSensor)
+    sensor._region = "NSW1"
+    sensor._config_entry = SimpleNamespace(
+        data={"plan": "legacy_happy_hour"},
+        options={"happy_hour_export_rate": 0.35},
+    )
+    sensor.coordinator = SimpleNamespace(
+        data={
+            "forecast": [
+                {
+                    "timestamp": f"2026-08-09T{hour}:00+10:00",
+                    "duration_minutes": 30,
+                }
+                for hour in (
+                    "17:30",
+                    "18:00",
+                    "18:30",
+                    "19:00",
+                    "19:30",
+                    "20:00",
+                )
+            ],
+            "export_price": calculate_export_price(
+                "NSW1",
+                current_time=datetime.fromisoformat("2026-08-09T18:00:00+10:00"),
+                plan="legacy_happy_hour",
+                happy_hour_rate_override=0.35,
+            ),
+        }
+    )
+
+    attrs = sensor.extra_state_attributes
+    nonzero_keys = [
+        key for key, value in attrs["forecast_dict"].items() if value == 0.35
+    ]
+
+    assert nonzero_keys == [
+        "2026-08-09T17:30:00+10:00",
+        "2026-08-09T18:00:00+10:00",
+        "2026-08-09T18:30:00+10:00",
+        "2026-08-09T19:00:00+10:00",
+    ]
+    assert attrs["forecast_dict"]["2026-08-09T19:30:00+10:00"] == 0.0
 
 
 def test_4free_import_attributes_keep_safe_state_and_full_range() -> None:
