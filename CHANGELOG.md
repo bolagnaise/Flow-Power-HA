@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.7.2
+
+### Fix: Use Consistent ISO Forecast Timestamp Keys
+
+- Import, wholesale, and price forecast `forecast_dict` attributes now use the same ISO timestamp format as export forecasts, with `T` separators and timezone offsets such as `+10:00`.
+- This keeps legacy Happy Hour export forecast keys aligned to interval starts while removing the mixed timestamp formatting introduced in v1.7.1.
+- Added regression coverage for import/export forecast timestamp consistency reported in #36.
+
 ## v1.7.1
 
 ### Fix: Align Export Forecast Keys To Interval Starts

@@ -159,6 +159,13 @@ class FlowPowerBaseSensor(CoordinatorEntity[FlowPowerCoordinator], SensorEntity)
         except (ValueError, TypeError):
             return timestamp
 
+    def _forecast_attribute_timestamp(self, timestamp: str) -> str:
+        """Return the canonical timestamp key used in forecast attributes."""
+        dt = self._parse_timestamp_to_datetime(timestamp)
+        if dt is not None:
+            return dt.isoformat()
+        return self._convert_to_iso_timestamp(timestamp)
+
     def _parse_timestamp_to_datetime(self, timestamp: str) -> datetime | None:
         """Parse timestamp string to datetime with timezone."""
         if not timestamp:
@@ -283,7 +290,7 @@ class FlowPowerImportPriceSensor(FlowPowerBaseSensor):
             forecast_rate_ranges = {}
             for period in self.coordinator.data["forecast"]:
                 raw_ts = period.get("timestamp", "")
-                iso_ts = self._convert_to_iso_timestamp(raw_ts)
+                iso_ts = self._forecast_attribute_timestamp(raw_ts)
                 if iso_ts:
                     forecast_dict[iso_ts] = period.get("price_dollars", 0)
                     forecast_rate_ranges[iso_ts] = {
@@ -455,7 +462,7 @@ class FlowPowerWholesaleSensor(FlowPowerBaseSensor):
             forecast_dict = {}
             for period in self.coordinator.data["forecast"]:
                 raw_ts = period.get("timestamp", "")
-                iso_ts = self._convert_to_iso_timestamp(raw_ts)
+                iso_ts = self._forecast_attribute_timestamp(raw_ts)
                 if iso_ts:
                     # Convert c/kWh to $/kWh
                     wholesale_cents = period.get("wholesale_cents", 0)
@@ -528,7 +535,7 @@ class FlowPowerForecastSensor(FlowPowerBaseSensor):
             for period in forecast:
                 price = period.get("price_dollars", 0)
                 raw_ts = period.get("timestamp", "")
-                iso_ts = self._convert_to_iso_timestamp(raw_ts)
+                iso_ts = self._forecast_attribute_timestamp(raw_ts)
 
                 prices.append(price)
                 timestamps.append(iso_ts)

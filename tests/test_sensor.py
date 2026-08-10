@@ -189,6 +189,58 @@ def test_legacy_happy_hour_export_forecast_keys_use_interval_start() -> None:
     assert attrs["forecast_dict"]["2026-08-09T19:30:00+10:00"] == 0.0
 
 
+def test_import_and_export_forecast_keys_use_consistent_iso_timestamps() -> None:
+    forecast = [
+        {
+            "timestamp": "2026/08/10 16:00:00",
+            "duration_minutes": 30,
+            "price_dollars": 0.26,
+            "rate_min_dollars": 0.26,
+            "rate_max_dollars": 0.26,
+            "rate_is_exact": True,
+            "calculation_basis": "exact",
+            "window_active": False,
+            "cap_status": "not_applicable",
+            "uncertainty_reason": None,
+        }
+    ]
+
+    import_sensor = object.__new__(FlowPowerImportPriceSensor)
+    import_sensor._region = "NSW1"
+    import_sensor.coordinator = SimpleNamespace(
+        data={
+            "forecast": forecast,
+            "last_update": "2026-08-10T15:30:00+10:00",
+        },
+        _import_price_history=[],
+    )
+
+    export_sensor = object.__new__(FlowPowerExportPriceSensor)
+    export_sensor._region = "NSW1"
+    export_sensor._config_entry = SimpleNamespace(
+        data={"plan": "legacy_happy_hour"},
+        options={"happy_hour_export_rate": 0.35},
+    )
+    export_sensor.coordinator = SimpleNamespace(
+        data={
+            "forecast": forecast,
+            "export_price": calculate_export_price(
+                "NSW1",
+                current_time=datetime.fromisoformat("2026-08-10T16:00:00+10:00"),
+                plan="legacy_happy_hour",
+                happy_hour_rate_override=0.35,
+            ),
+        }
+    )
+
+    import_attrs = import_sensor.extra_state_attributes
+    export_attrs = export_sensor.extra_state_attributes
+
+    assert list(import_attrs["forecast_dict"]) == ["2026-08-10T16:00:00+10:00"]
+    assert "2026-08-10 16:00:00+1000" not in import_attrs["forecast_dict"]
+    assert list(export_attrs["forecast_dict"]) == ["2026-08-10T15:30:00+10:00"]
+
+
 def test_4free_import_attributes_keep_safe_state_and_full_range() -> None:
     sensor = object.__new__(FlowPowerImportPriceSensor)
     sensor._region = "NSW1"
