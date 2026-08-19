@@ -102,6 +102,7 @@ HAPPY_HOUR_END = time(19, 30)    # 7:30 PM
 # internal legacy plan so their historical 5:30-7:30 uncapped export behaviour
 # does not silently change.
 CONF_PLAN = "plan"
+CONF_EXPORT_SENSOR = "export_sensor"
 PLAN_FLOW_HOME = "flow_home"
 PLAN_HAPPY_HOUR = "happy_hour"
 PLAN_4FREE = "4free"

@@ -14,6 +14,7 @@ from homeassistant.helpers import selector
 
 from .const import (
     CONF_BASE_RATE,
+    CONF_EXPORT_SENSOR,
     CONF_FLOWPOWER_API_KEY,
     CONF_FLOWPOWER_NMI,
     CONF_HAPPY_HOUR_EXPORT_RATE,
@@ -419,6 +420,9 @@ class FlowPowerSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         mode=selector.NumberSelectorMode.BOX,
                     )
                 ),
+                vol.Optional(CONF_EXPORT_SENSOR): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="sensor")
+                ),
             }),
         )
 
@@ -627,6 +631,14 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
                 CONF_FLOWPOWER_NMI,
                 description={"suggested_value": current.get(CONF_FLOWPOWER_NMI)},
             ): str,
+            vol.Optional(
+                CONF_EXPORT_SENSOR,
+                description={"suggested_value": current.get(CONF_EXPORT_SENSOR)},
+            ): selector.EntitySelector(
+                selector.EntitySelectorConfig(
+                    domain="sensor",
+                )
+            ),
         }
 
         if current_plan == PLAN_LEGACY_HAPPY_HOUR:
