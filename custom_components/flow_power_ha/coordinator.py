@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import time as time_mod
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -16,6 +17,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .api_clients import AEMOClient
 from .const import (
     CONF_BASE_RATE,
+    CONF_EXPORT_SENSOR,
     CONF_FLOWPOWER_API_KEY,
     CONF_FLOWPOWER_NMI,
     CONF_HAPPY_HOUR_EXPORT_RATE,
@@ -95,6 +97,10 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.pea_custom_value = config.get(CONF_PEA_CUSTOM_VALUE)
         self.happy_hour_export_rate = config.get(CONF_HAPPY_HOUR_EXPORT_RATE)
         self.plan = config.get(CONF_PLAN, PLAN_LEGACY_HAPPY_HOUR)
+
+        # Export quota tracking
+        self._export_sensor_entity_id: str | None = config.get(CONF_EXPORT_SENSOR)
+        self._export_baseline: float | None = None
 
         # Network tariff config
         self._fp_network = config.get(CONF_FP_NETWORK)
@@ -191,6 +197,17 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _handle_plan_transition(self, now: datetime) -> None:
         """Recalculate prices exactly when a selected-plan window changes."""
         _LOGGER.info("Flow Power: %s plan transition update at %s", self.plan, now)
+
+        # Determine whether this is a window-open (17:30) or window-close event.
+        if now.hour == 17 and now.minute == 30:
+            # Window-open: capture the export baseline before pricing.
+            self._capture_export_baseline()
+        else:
+            # Window-close (19:30 for legacy_happy_hour, 21:30 for happy_hour/4free):
+            # clear the baseline so post-window pricing falls back to pessimistic.
+            self._export_baseline = None
+            _LOGGER.debug("Flow Power: export baseline cleared at window-close (%s)", now)
+
         if not self.data:
             self.hass.async_create_task(self.async_request_refresh())
             return
@@ -289,12 +306,101 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         current_time: datetime | None = None,
     ) -> dict[str, Any]:
         """Calculate the selected plan's conservative effective export quote."""
+        exported_this_window_kwh = self._compute_exported_this_window_kwh()
         return calculate_export_price(
             self.region,
             current_time=current_time,
             happy_hour_rate_override=self.happy_hour_export_rate,
             plan=self.plan,
+            exported_this_window_kwh=exported_this_window_kwh,
         )
+
+    def _capture_export_baseline(self) -> None:
+        """Capture the current export sensor reading as the window baseline.
+
+        Called at window-open (17:30) by _handle_plan_transition.  Any problem
+        reading or parsing the sensor results in the baseline being set to None
+        so the coordinator falls back to pessimistic pricing rather than raising.
+        """
+        if self._export_sensor_entity_id is None:
+            # No sensor configured — nothing to do.
+            return
+
+        entity_id = self._export_sensor_entity_id
+        state = self.hass.states.get(entity_id)
+
+        if state is None or state.state in ("unavailable", "unknown"):
+            _LOGGER.warning(
+                "Flow Power: export sensor '%s' is not available at baseline "
+                "capture time (state=%s) — export quota tracking disabled for "
+                "this window",
+                entity_id,
+                state.state if state is not None else None,
+            )
+            self._export_baseline = None
+            return
+
+        try:
+            value = float(state.state)
+        except (ValueError, TypeError):
+            _LOGGER.warning(
+                "Flow Power: export sensor '%s' state '%s' could not be "
+                "parsed as a number — export quota tracking disabled for "
+                "this window",
+                entity_id,
+                state.state,
+            )
+            self._export_baseline = None
+            return
+
+        if not math.isfinite(value) or value < 0:
+            _LOGGER.warning(
+                "Flow Power: export sensor '%s' value %s is non-finite or "
+                "negative — export quota tracking disabled for this window",
+                entity_id,
+                value,
+            )
+            self._export_baseline = None
+            return
+
+        self._export_baseline = value
+        _LOGGER.debug(
+            "Flow Power: export baseline captured — entity=%s, baseline=%.3f kWh",
+            entity_id,
+            value,
+        )
+
+    def _compute_exported_this_window_kwh(self) -> float | None:
+        """Compute kWh exported since the window opened.
+
+        Returns the difference between the current export sensor reading and
+        the baseline captured at window-open (17:30).  Returns ``None`` in any
+        error or edge-case condition so the coordinator falls back to
+        pessimistic pricing rather than raising.
+        """
+        if self._export_sensor_entity_id is None or self._export_baseline is None:
+            return None
+
+        entity_id = self._export_sensor_entity_id
+        state = self.hass.states.get(entity_id)
+
+        if state is None or state.state in ("unavailable", "unknown"):
+            return None
+
+        try:
+            current = float(state.state)
+        except (ValueError, TypeError):
+            return None
+
+        import math
+        if not math.isfinite(current):
+            return None
+
+        value = current - self._export_baseline
+        if value < 0:
+            return None
+
+        return value
 
     def _pricing_context(self) -> FlowPowerPricingContext:
         """Resolve the effective Flow Power pricing inputs for this update."""
