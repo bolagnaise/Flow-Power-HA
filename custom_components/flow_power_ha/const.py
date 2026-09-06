@@ -169,6 +169,7 @@ CONF_BASE_RATE = "base_rate"
 CONF_PEA_ENABLED = "pea_enabled"
 CONF_PEA_CUSTOM_VALUE = "pea_custom_value"
 CONF_HAPPY_HOUR_EXPORT_RATE = "happy_hour_export_rate"
+CONF_EXPORT_ENERGY_ENTITY = "export_energy_entity"
 
 # Flow Power Web Data API configuration keys
 CONF_FLOWPOWER_API_KEY = "flowpower_api_key"

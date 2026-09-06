@@ -42,6 +42,38 @@ from flow_power_ha.flow_power_api import (  # noqa: E402
     probe_residential_nmi,
 )
 from flow_power_ha.api_clients import AEMOClient  # noqa: E402
+from flow_power_ha.export_energy import (  # noqa: E402
+    total_increasing_energy_value,
+    usage_since_baseline,
+)
+
+
+def test_export_energy_counter_requires_energy_total_increasing_kwh() -> None:
+    valid = SimpleNamespace(
+        state="125.75",
+        attributes={
+            "unit_of_measurement": "kWh",
+            "device_class": "energy",
+            "state_class": "total_increasing",
+        },
+    )
+    invalid = SimpleNamespace(
+        state="125.75",
+        attributes={
+            "unit_of_measurement": "kWh",
+            "device_class": "energy",
+            "state_class": "measurement",
+        },
+    )
+
+    assert total_increasing_energy_value(valid) == 125.75
+    assert total_increasing_energy_value(invalid) is None
+
+
+def test_export_energy_usage_is_calculated_from_boundary_baseline() -> None:
+    assert usage_since_baseline(125.75, 140.7499) == 14.9999
+    assert usage_since_baseline(125.75, 125.5) is None
+    assert usage_since_baseline(None, 140.0) is None
 
 
 class _FakeResponse:

@@ -14,6 +14,7 @@ from homeassistant.helpers import selector
 
 from .const import (
     CONF_BASE_RATE,
+    CONF_EXPORT_ENERGY_ENTITY,
     CONF_FLOWPOWER_API_KEY,
     CONF_FLOWPOWER_NMI,
     CONF_HAPPY_HOUR_EXPORT_RATE,
@@ -647,6 +648,17 @@ class FlowPowerSyncOptionsFlow(config_entries.OptionsFlow):
                     unit_of_measurement="$/kWh",
                     mode=selector.NumberSelectorMode.BOX,
                 )
+            )
+        else:
+            schema_fields[
+                vol.Optional(
+                    CONF_EXPORT_ENERGY_ENTITY,
+                    description={
+                        "suggested_value": current.get(CONF_EXPORT_ENERGY_ENTITY)
+                    },
+                )
+            ] = selector.EntitySelector(
+                selector.EntitySelectorConfig(domain="sensor")
             )
 
         return vol.Schema(schema_fields)

@@ -105,11 +105,13 @@
           "happy_hour_export_rate": "Legacy Happy Hour Export Rate ($/kWh)",
           "fp_network": "Electricity Distributor (DNSP)",
           "flowpower_api_key": "Flow Power Web Data API Key",
-          "flowpower_nmi": "Account NMI (optional)"
+          "flowpower_nmi": "Account NMI (optional)",
+          "export_energy_entity": "Export Energy Counter (optional)"
         },
         "data_description": {
           "flowpower_api_key": "Leave blank to keep the currently saved key.",
-          "flowpower_nmi": "Used for PEA, LWAP, TWAP, demand, and account sensors. Enter the NMI from your electricity bill if automatic site discovery did not find it."
+          "flowpower_nmi": "Used for PEA, LWAP, TWAP, demand, and account sensors. Enter the NMI from your electricity bill if automatic site discovery did not find it.",
+          "export_energy_entity": "Select a kWh energy sensor with device class energy and state class total_increasing. The integration snapshots it at 5:30pm and subtracts it during the capped export window; it remains conservative if a baseline is unavailable."
         }
       },
       "flowpower_site_options": {

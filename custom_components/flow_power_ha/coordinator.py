@@ -6,16 +6,18 @@ import time as time_mod
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import aiohttp
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.event import async_track_time_change
+from homeassistant.helpers.event import async_track_state_change_event, async_track_time_change
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api_clients import AEMOClient
 from .const import (
     CONF_BASE_RATE,
+    CONF_EXPORT_ENERGY_ENTITY,
     CONF_FLOWPOWER_API_KEY,
     CONF_FLOWPOWER_NMI,
     CONF_HAPPY_HOUR_EXPORT_RATE,
@@ -48,6 +50,7 @@ from .pricing import (
     calculate_import_price,
 )
 from .flow_power_pricing import FlowPowerPricingContext, resolve_flow_power_pricing_context
+from .export_energy import total_increasing_energy_value, usage_since_baseline
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -95,6 +98,11 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.pea_custom_value = config.get(CONF_PEA_CUSTOM_VALUE)
         self.happy_hour_export_rate = config.get(CONF_HAPPY_HOUR_EXPORT_RATE)
         self.plan = config.get(CONF_PLAN, PLAN_LEGACY_HAPPY_HOUR)
+        self.export_energy_entity = config.get(CONF_EXPORT_ENERGY_ENTITY)
+        self._export_energy_baseline: dict[str, Any] | None = None
+        self._export_energy_store = Store(
+            hass, 1, f"{DOMAIN}.export_energy_baseline.{self.region}"
+        )
 
         # Network tariff config
         self._fp_network = config.get(CONF_FP_NETWORK)
@@ -181,6 +189,15 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             self._unsub_time_listeners.append(unsub_tariff)
 
+        if self.export_energy_entity:
+            self._unsub_time_listeners.append(
+                async_track_state_change_event(
+                    self.hass,
+                    [self.export_energy_entity],
+                    self._handle_export_energy_update,
+                )
+            )
+
         _LOGGER.info(
             "Flow Power: plan boundary listeners registered for %s; "
             "adaptive polling replaces fixed 30-second AEMO timer",
@@ -191,6 +208,12 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _handle_plan_transition(self, now: datetime) -> None:
         """Recalculate prices exactly when a selected-plan window changes."""
         _LOGGER.info("Flow Power: %s plan transition update at %s", self.plan, now)
+        if (
+            self.plan in (PLAN_HAPPY_HOUR, PLAN_4FREE)
+            and now.hour == 17
+            and now.minute == 30
+        ):
+            self._capture_export_energy_baseline(now)
         if not self.data:
             self.hass.async_create_task(self.async_request_refresh())
             return
@@ -203,6 +226,15 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 current_time=now,
             )
         data["export_price"] = self._calculate_export_price(current_time=now)
+        self._publish_manual_data_update(data)
+
+    @callback
+    def _handle_export_energy_update(self, _event: Any) -> None:
+        """Publish a new export quote when the configured counter advances."""
+        if not self.data:
+            return
+        data = dict(self.data)
+        data["export_price"] = self._calculate_export_price()
         self._publish_manual_data_update(data)
 
     @callback
@@ -294,7 +326,63 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             current_time=current_time,
             happy_hour_rate_override=self.happy_hour_export_rate,
             plan=self.plan,
+            exported_this_window_kwh=self._exported_this_window_kwh(current_time),
         )
+
+    def _local_export_datetime(self, current_time: datetime | None) -> datetime:
+        """Return the timestamp in the selected NEM region's local timezone."""
+        region_timezones = {
+            "NSW1": "Australia/Sydney",
+            "QLD1": "Australia/Brisbane",
+            "VIC1": "Australia/Melbourne",
+            "SA1": "Australia/Adelaide",
+            "TAS1": "Australia/Hobart",
+        }
+        zone = ZoneInfo(region_timezones.get(self.region, "Australia/Sydney"))
+        if current_time is None:
+            return datetime.now(zone)
+        if current_time.tzinfo is None:
+            return current_time.replace(tzinfo=zone)
+        return current_time.astimezone(zone)
+
+    def _capture_export_energy_baseline(self, current_time: datetime) -> None:
+        """Persist the total-increasing export value at the window boundary."""
+        if not self.export_energy_entity:
+            return
+        value = total_increasing_energy_value(
+            self.hass.states.get(self.export_energy_entity)
+        )
+        if value is None:
+            _LOGGER.warning(
+                "Flow Power: export energy entity %s must provide a kWh "
+                "energy/total_increasing state; keeping Happy Hour cap unknown",
+                self.export_energy_entity,
+            )
+            return
+        self._export_energy_baseline = {
+            "date": self._local_export_datetime(current_time).date().isoformat(),
+            "entity_id": self.export_energy_entity,
+            "kwh": value,
+        }
+        self.hass.async_create_task(self._async_save_export_energy_baseline())
+
+    def _exported_this_window_kwh(
+        self, current_time: datetime | None
+    ) -> float | None:
+        """Calculate usage from this window's persisted counter baseline."""
+        if not self.export_energy_entity or not self._export_energy_baseline:
+            return None
+        local_time = self._local_export_datetime(current_time)
+        baseline = self._export_energy_baseline
+        if (
+            baseline.get("date") != local_time.date().isoformat()
+            or baseline.get("entity_id") != self.export_energy_entity
+        ):
+            return None
+        current = total_increasing_energy_value(
+            self.hass.states.get(self.export_energy_entity)
+        )
+        return usage_since_baseline(baseline.get("kwh"), current)
 
     def _pricing_context(self) -> FlowPowerPricingContext:
         """Resolve the effective Flow Power pricing inputs for this update."""
@@ -462,6 +550,15 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._get_twap_days(),
             )
 
+        if self.export_energy_entity:
+            baseline = await self._export_energy_store.async_load()
+            if (
+                isinstance(baseline, dict)
+                and baseline.get("entity_id") == self.export_energy_entity
+                and isinstance(baseline.get("date"), str)
+            ):
+                self._export_energy_baseline = baseline
+
     async def _save_fp_data_cache(self) -> None:
         """Persist the last known API account data so sensors survive restarts."""
         if not self._fp_data:
@@ -471,6 +568,15 @@ class FlowPowerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self._fp_data_store.async_save({"data": save_data})
         except Exception as e:
             _LOGGER.error("Flow Power: Error saving API account data cache: %s", e)
+
+    async def _async_save_export_energy_baseline(self) -> None:
+        """Persist the boundary baseline so a restart does not lose the cap state."""
+        if not self._export_energy_baseline:
+            return
+        try:
+            await self._export_energy_store.async_save(self._export_energy_baseline)
+        except Exception as err:
+            _LOGGER.error("Flow Power: Error saving export energy baseline: %s", err)
 
     # ------------------------------------------------------------------
     # Main update loop

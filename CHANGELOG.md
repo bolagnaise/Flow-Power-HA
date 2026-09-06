@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.7.3
+
+### Fix: Track Capped Export Allowance From an Optional HA Energy Counter
+
+- Happy Hour and 4Free entries can now select a Home Assistant export-energy sensor with `kWh`, `energy`, and `total_increasing` metadata.
+- The integration snapshots the selected counter at 5:30pm, calculates the current-window export total as the counter delta, and updates the live export price when the counter changes.
+- The boundary snapshot is persisted so a normal restart during the 5:30pm-9:30pm window retains an exact cap state. Invalid counters, counter resets, first setup mid-window, and missing same-day baselines remain safely conservative at the guaranteed lower tier.
+
 ## v1.7.2
 
 ### Fix: Use Consistent ISO Forecast Timestamp Keys
